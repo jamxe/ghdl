@@ -25,7 +25,6 @@ with Elab.Vhdl_Objtypes; use Elab.Vhdl_Objtypes;
 with Elab.Vhdl_Values; use Elab.Vhdl_Values;
 with Elab.Vhdl_Types; use Elab.Vhdl_Types;
 with Elab.Vhdl_Decls; use Elab.Vhdl_Decls;
-with Elab.Vhdl_Insts; use Elab.Vhdl_Insts;
 
 with Synth.Vhdl_Expr; use Synth.Vhdl_Expr;
 with Synth.Vhdl_Stmts;
@@ -40,8 +39,14 @@ package body Elab.Vhdl_Stmts is
    is
       Decls_Chain : constant Node := Get_Declaration_Chain (Bod);
       Bod_Inst : Synth_Instance_Acc;
+      Cfgs : Configs_Rec;
    begin
+      --  The generate statement body is used in at least one instance.
+      Set_Use_Flag (Bod, True);
+
       Bod_Inst := Make_Elab_Instance (Syn_Inst, Bod, Bod, Config);
+
+      Cfgs := Apply_Block_Configuration (Config, Bod);
 
       if Iterator /= Null_Node then
          --  Add the iterator (for for-generate).
@@ -55,26 +60,32 @@ package body Elab.Vhdl_Stmts is
       pragma Assert (Is_Expr_Pool_Empty);
 
       Elab_Concurrent_Statements
-        (Bod_Inst, Get_Concurrent_Statement_Chain (Bod));
+        (Bod_Inst, Get_Concurrent_Statement_Chain (Bod), Cfgs);
+
+      Free_Configs_Rec (Cfgs);
 
       return Bod_Inst;
    end Elab_Generate_Statement_Body;
 
-   procedure Elab_For_Generate_Statement
-     (Syn_Inst : Synth_Instance_Acc; Stmt : Node)
+   procedure Elab_For_Generate_Statement (Syn_Inst : Synth_Instance_Acc;
+                                          Stmt : Node;
+                                          Parent_Cfgs : in out Configs_Rec)
    is
       Iterator : constant Node := Get_Parameter_Specification (Stmt);
       Bod : constant Node := Get_Generate_Statement_Body (Stmt);
-      Configs : constant Node := Get_Generate_Block_Configuration (Bod);
       It_Type : constant Node := Get_Declaration_Type (Iterator);
       Gen_Inst : Synth_Instance_Acc;
       Sub_Inst : Synth_Instance_Acc;
+      Configs : Node;
       Config : Node;
       It_Rng : Type_Acc;
       Val : Valtyp;
       Dval : Int64;
       Len : Uns32;
+      Cfgs : Configs_Rec;
    begin
+      Get_Next_Block_Configuration (Parent_Cfgs, Configs);
+
       if It_Type /= Null_Node then
          Synth_Subtype_Indication (Syn_Inst, It_Type);
       end if;
@@ -129,8 +140,9 @@ package body Elab.Vhdl_Stmts is
             if Config = Null_Node then
                Config := Default;
             end if;
-            Apply_Block_Configuration (Config, Bod);
          end;
+
+         Cfgs := Apply_Block_Configuration (Config, Bod);
 
          --  Allocate the iterator value for the body.
          Current_Pool := Instance_Pool;
@@ -140,6 +152,8 @@ package body Elab.Vhdl_Stmts is
          Sub_Inst := Elab_Generate_Statement_Body
            (Gen_Inst, Bod, Config, Iterator, Val);
          Set_Generate_Sub_Instance (Gen_Inst, Positive (I), Sub_Inst);
+
+         Free_Configs_Rec (Cfgs);
 
          --  Update index.
          case It_Rng.Drange.Dir is
@@ -151,8 +165,9 @@ package body Elab.Vhdl_Stmts is
       end loop;
    end Elab_For_Generate_Statement;
 
-   procedure Elab_If_Generate_Statement
-     (Syn_Inst : Synth_Instance_Acc; Stmt : Node)
+   procedure Elab_If_Generate_Statement (Syn_Inst : Synth_Instance_Acc;
+                                         Stmt : Node;
+                                         Parent_Cfgs : in out Configs_Rec)
    is
       Marker : Mark_Type;
       Gen : Node;
@@ -162,6 +177,7 @@ package body Elab.Vhdl_Stmts is
       Cond_Val : Boolean;
       Config : Node;
       Sub_Inst : Synth_Instance_Acc;
+      Cfgs : Configs_Rec;
    begin
       Mark_Expr_Pool (Marker);
       Gen := Stmt;
@@ -178,13 +194,24 @@ package body Elab.Vhdl_Stmts is
          end if;
          Release_Expr_Pool (Marker);
 
-         if Cond_Val then
-            Bod := Get_Generate_Statement_Body (Gen);
-            Config := Get_Generate_Block_Configuration (Bod);
+         Bod := Get_Generate_Statement_Body (Gen);
+         Get_Next_Block_Configuration (Parent_Cfgs, Config);
 
-            Apply_Block_Configuration (Config, Bod);
+         if Cond_Val then
+            Cfgs := Apply_Block_Configuration (Config, Bod);
             Sub_Inst := Elab_Generate_Statement_Body (Syn_Inst, Bod, Config);
             Create_Sub_Instance (Syn_Inst, Bod, Sub_Inst);
+
+            Free_Configs_Rec (Cfgs);
+
+            --  Consume all configs.
+            Gen := Get_Generate_Else_Clause (Gen);
+            while Gen /= Null_Node loop
+               Bod := Get_Generate_Statement_Body (Gen);
+               Get_Next_Block_Configuration (Parent_Cfgs, Config);
+               Gen := Get_Generate_Else_Clause (Gen);
+            end loop;
+
             return;
          end if;
          Gen := Get_Generate_Else_Clause (Gen);
@@ -195,15 +222,18 @@ package body Elab.Vhdl_Stmts is
       Create_Sub_Instance (Syn_Inst, Stmt, null);
    end Elab_If_Generate_Statement;
 
-   procedure Elab_Case_Generate_Statement
-     (Syn_Inst : Synth_Instance_Acc; Stmt : Node)
+   procedure Elab_Case_Generate_Statement (Syn_Inst : Synth_Instance_Acc;
+                                           Stmt : Node;
+                                           Parent_Cfgs : in out Configs_Rec)
    is
       Choices : constant Node := Get_Case_Statement_Alternative_Chain (Stmt);
+      Alt : Node;
       Marker : Mark_Type;
       Expr : Node;
       Val : Valtyp;
       Gen : Node;
       Bod : Node;
+      Bod_Config : Node;
       Config : Node;
       Sub_Inst : Synth_Instance_Acc;
    begin
@@ -214,28 +244,41 @@ package body Elab.Vhdl_Stmts is
       Val := Synth_Expression (Syn_Inst, Expr);
       Strip_Const (Val);
 
-      Gen := Synth.Vhdl_Stmts.Execute_Static_Choices_Scalar
-        (Syn_Inst, Choices, Read_Discrete (Val));
-      Bod := Get_Associated_Block (Gen);
+      Gen := Synth.Vhdl_Stmts.Execute_Static_Choices (Syn_Inst, Choices, Val);
       Release_Expr_Pool (Marker);
 
-      Config := Get_Generate_Block_Configuration (Bod);
+      --  Get the corresponding block configuration.
+      Alt := Choices;
+      while Alt /= Null_Node loop
+         if not Get_Same_Alternative_Flag (Alt) then
+            Bod := Get_Associated_Block (Alt);
+            Get_Next_Block_Configuration (Parent_Cfgs, Bod_Config);
+            if Alt = Gen then
+               Config := Bod_Config;
+            end if;
+         end if;
+         Alt := Get_Chain (Alt);
+      end loop;
 
-      Apply_Block_Configuration (Config, Bod);
+      Bod := Get_Associated_Block (Gen);
       Sub_Inst := Elab_Generate_Statement_Body (Syn_Inst, Bod, Config);
       Create_Sub_Instance (Syn_Inst, Bod, Sub_Inst);
    end Elab_Case_Generate_Statement;
 
-   procedure Elab_Block_Statement (Syn_Inst : Synth_Instance_Acc; Blk : Node)
+   procedure Elab_Block_Statement (Syn_Inst : Synth_Instance_Acc;
+                                   Blk : Node;
+                                   Parent_Cfgs : in out Configs_Rec)
    is
       Hdr : constant Node := Get_Block_Header (Blk);
       Guard : constant Node := Get_Guard_Decl (Blk);
+      Blk_Cfg : Node;
       Blk_Inst : Synth_Instance_Acc;
       Assoc : Node;
       Inter : Node;
+      Cfgs : Configs_Rec;
    begin
-      Apply_Block_Configuration
-        (Get_Block_Block_Configuration (Blk), Blk);
+      Get_Next_Block_Configuration (Parent_Cfgs, Blk_Cfg);
+      Cfgs := Apply_Block_Configuration (Blk_Cfg, Blk);
 
       Blk_Inst := Make_Elab_Instance (Syn_Inst, Blk, Blk, Null_Iir);
       Create_Sub_Instance (Syn_Inst, Blk, Blk_Inst);
@@ -260,11 +303,14 @@ package body Elab.Vhdl_Stmts is
 
       Elab_Declarations (Blk_Inst, Get_Declaration_Chain (Blk));
       Elab_Concurrent_Statements
-        (Blk_Inst, Get_Concurrent_Statement_Chain (Blk));
+        (Blk_Inst, Get_Concurrent_Statement_Chain (Blk), Cfgs);
+
+      Free_Configs_Rec (Cfgs);
    end Elab_Block_Statement;
 
-   procedure Elab_Concurrent_Statement
-     (Syn_Inst : Synth_Instance_Acc; Stmt : Node) is
+   procedure Elab_Concurrent_Statement (Syn_Inst : Synth_Instance_Acc;
+                                        Stmt : Node;
+                                        Cfgs : in out Configs_Rec) is
    begin
       case Get_Kind (Stmt) is
          when Iir_Kinds_Process_Statement =>
@@ -276,6 +322,8 @@ package body Elab.Vhdl_Stmts is
            | Iir_Kind_Concurrent_Procedure_Call_Statement
            | Iir_Kind_Concurrent_Break_Statement
            | Iir_Kind_Simple_Simultaneous_Statement
+           | Iir_Kind_Simultaneous_If_Statement
+           | Iir_Kind_Simultaneous_Case_Statement
            | Iir_Kind_Psl_Default_Clock
            | Iir_Kind_Psl_Restrict_Directive
            | Iir_Kind_Psl_Assume_Directive
@@ -295,22 +343,22 @@ package body Elab.Vhdl_Stmts is
 
          when Iir_Kind_Component_Instantiation_Statement =>
             if Is_Component_Instantiation (Stmt) then
-               Elab_Component_Instantiation_Statement (Syn_Inst, Stmt);
+               Elab_Component_Instantiation_Statement (Syn_Inst, Stmt, Cfgs);
             else
                Elab_Design_Instantiation_Statement (Syn_Inst, Stmt);
             end if;
 
          when Iir_Kind_For_Generate_Statement =>
-            Elab_For_Generate_Statement (Syn_Inst, Stmt);
+            Elab_For_Generate_Statement (Syn_Inst, Stmt, Cfgs);
 
          when Iir_Kind_If_Generate_Statement =>
-            Elab_If_Generate_Statement (Syn_Inst, Stmt);
+            Elab_If_Generate_Statement (Syn_Inst, Stmt, Cfgs);
 
          when Iir_Kind_Case_Generate_Statement =>
-            Elab_Case_Generate_Statement (Syn_Inst, Stmt);
+            Elab_Case_Generate_Statement (Syn_Inst, Stmt, Cfgs);
 
          when Iir_Kind_Block_Statement =>
-            Elab_Block_Statement (Syn_Inst, Stmt);
+            Elab_Block_Statement (Syn_Inst, Stmt, Cfgs);
 
          when others =>
             Error_Kind ("elab_concurrent_statement", Stmt);
@@ -318,8 +366,9 @@ package body Elab.Vhdl_Stmts is
       pragma Assert (Is_Expr_Pool_Empty);
    end Elab_Concurrent_Statement;
 
-   procedure Elab_Concurrent_Statements
-     (Syn_Inst : Synth_Instance_Acc; Chain : Node)
+   procedure Elab_Concurrent_Statements (Syn_Inst : Synth_Instance_Acc;
+                                         Chain : Node;
+                                         Cfgs : in out Configs_Rec)
    is
       Stmt : Node;
    begin
@@ -329,7 +378,7 @@ package body Elab.Vhdl_Stmts is
 
       Stmt := Chain;
       while Stmt /= Null_Node loop
-         Elab_Concurrent_Statement (Syn_Inst, Stmt);
+         Elab_Concurrent_Statement (Syn_Inst, Stmt, Cfgs);
          Stmt := Get_Chain (Stmt);
       end loop;
    end Elab_Concurrent_Statements;

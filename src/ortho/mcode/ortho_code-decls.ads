@@ -20,13 +20,14 @@ package Ortho_Code.Decls is
    type OD_Kind is
      (
       OD_Type,
+      OD_Completer,
       OD_Const,
 
       --  Value of constant, initial value of variable.
       OD_Init_Val,
 
       --  Global and local variables.
-      OD_Var, OD_Local,
+      OD_Var, OD_Local, OD_Var_Body,
 
       --  Subprograms.
       OD_Function, OD_Procedure,
@@ -99,6 +100,7 @@ package Ortho_Code.Decls is
    --  Declare a type.
    --  This simply gives a name to a type.
    procedure New_Type_Decl (Ident : O_Ident; Atype : O_Tnode);
+   procedure Complete_Type_Decl (Atype : O_Tnode);
 
    --  If Flag_Type_Name is set, a map from type to name is maintained.
    function Get_Type_Decl (Atype : O_Tnode) return O_Dnode;
@@ -140,6 +142,11 @@ package Ortho_Code.Decls is
    --  ATYPE must be constrained.
    procedure New_Var_Decl (Res : out O_Dnode;
                            Ident : O_Ident;
+                           Storage : O_Storage;
+                           Atype : O_Tnode);
+
+   --  Change storage of VAR (from external to public or private).
+   procedure New_Var_Body (Var : O_Dnode;
                            Storage : O_Storage;
                            Atype : O_Tnode);
 

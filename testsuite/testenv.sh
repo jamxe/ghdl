@@ -153,13 +153,30 @@ synth_tb()
   clean
 }
 
+verilog_synth_tb()
+{
+    t=$1
+    shift
+
+    synth --out=verilog $t.v $* -e > syn_$t.v
+}
+
+
 # Check if a C compiler is installed on this system
 c_compiler_is_available ()
 {
-  if [ -z $CC ]; then
-    CC="gcc"
-  fi
-  which $CC
+    if [ -z $CC ]; then
+	if which gcc > /dev/null 2>&1 ; then
+	    CC=gcc
+	elif which clang > /dev/null 2>&1 ; then
+	    CC=clang
+	else
+	    CC=cc
+	fi
+    fi
+
+    # Check the presence of the C compiler
+    which $CC > /dev/null 2>&1
 }
 
 # Check if a feature is present
@@ -171,6 +188,11 @@ ghdl_has_feature ()
 ghdl_is_interpretation ()
 {
   "$GHDL" --version | grep -q interpretation
+}
+
+ghdl_is_preelaboration ()
+{
+  "$GHDL" --version | grep -q "static elaboration"
 }
 
 # Run a program

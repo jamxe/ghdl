@@ -19,6 +19,8 @@ with Vhdl.Nodes_Priv;
 with Vhdl.Nodes_Meta;
 with Types; use Types;
 with Files_Map;
+with Vhdl.Sem_Types;
+with Vhdl.Sem_Decls;
 with Vhdl.Utils; use Vhdl.Utils;
 with Vhdl.Errors; use Vhdl.Errors;
 with Vhdl.Sem_Utils;
@@ -259,32 +261,36 @@ package body Vhdl.Sem_Inst is
                S : constant Iir := Get_Iir (N, F);
                R : Iir;
             begin
-               case Get_Field_Attribute (F) is
-                  when Attr_None =>
-                     R := Instantiate_Iir (S, False);
-                  when Attr_Ref =>
-                     R := Instantiate_Iir (S, True);
-                  when Attr_Maybe_Ref =>
-                     R := Instantiate_Iir (S, Get_Is_Ref (N));
-                  when Attr_Forward_Ref =>
-                     --  Must be explicitly handled in Instantiate_Iir, as it
-                     --  requires special handling.
-                     raise Internal_Error;
-                  when Attr_Maybe_Forward_Ref =>
-                     if Get_Is_Forward_Ref (N) then
-                        --  Likewise: must be explicitly handled.
-                        raise Internal_Error;
-                     else
+               if S = Null_Iir then
+                  R := Null_Iir;
+               else
+                  case Get_Field_Attribute (F) is
+                     when Attr_None =>
+                        R := Instantiate_Iir (S, False);
+                     when Attr_Ref =>
                         R := Instantiate_Iir (S, True);
-                     end if;
-                  when Attr_Chain =>
-                     R := Instantiate_Iir_Chain (S);
-                  when Attr_Chain_Next =>
-                     R := Null_Iir;
-                  when Attr_Of_Ref | Attr_Of_Maybe_Ref =>
-                     --  Can only appear in list.
-                     raise Internal_Error;
-               end case;
+                     when Attr_Maybe_Ref =>
+                        R := Instantiate_Iir (S, Get_Is_Ref (N));
+                     when Attr_Forward_Ref =>
+                        --  Must be explicitly handled in Instantiate_Iir, as
+                        --  it requires special handling.
+                        raise Internal_Error;
+                     when Attr_Maybe_Forward_Ref =>
+                        if Get_Is_Forward_Ref (N) then
+                           --  Likewise: must be explicitly handled.
+                           raise Internal_Error;
+                        else
+                           R := Instantiate_Iir (S, True);
+                        end if;
+                     when Attr_Chain =>
+                        R := Instantiate_Iir_Chain (S);
+                     when Attr_Chain_Next =>
+                        R := Null_Iir;
+                     when Attr_Of_Ref | Attr_Of_Maybe_Ref =>
+                        --  Can only appear in list.
+                        raise Internal_Error;
+                  end case;
+               end if;
                Set_Iir (Res, F, R);
             end;
          when Type_Iir_List =>
@@ -700,6 +706,18 @@ package body Vhdl.Sem_Inst is
                   --  Already handled by Field_Suspend_State_Chain.
                   null;
 
+               when Field_Default_Configuration_Declaration =>
+                  --  Only when instantiating an architecture.  Done manually.
+                  null;
+
+               when Field_Associated_Type =>
+                  null;
+
+               when Field_Generate_Block_Configuration =>
+                  pragma Assert
+                    (Get_Generate_Block_Configuration (Res) = Null_Iir);
+                  null;
+
                when others =>
                   --  Common case.
                   Instantiate_Iir_Field (Res, N, F);
@@ -748,16 +766,25 @@ package body Vhdl.Sem_Inst is
 
          case Get_Kind (Res) is
             when Iir_Kind_Interface_Constant_Declaration =>
-               Set_Type (Res, Get_Type (Inter));
-               Set_Subtype_Indication (Res, Null_Iir); --  Not owner
-               Set_Mode (Res, Get_Mode (Inter));
-               Set_Has_Mode (Res, Get_Has_Mode (Inter));
-               Set_Has_Class (Res, Get_Has_Class (Inter));
-               Set_Has_Identifier_List (Res, Get_Has_Identifier_List (Inter));
-               Set_Expr_Staticness (Res, Get_Expr_Staticness (Inter));
-               Set_Name_Staticness (Res, Get_Name_Staticness (Inter));
-               Set_Default_Value (Res, Get_Default_Value (Inter));
-               Set_Is_Ref (Res, True);
+               declare
+                  Is_Ref : constant Boolean := Get_Is_Ref (Inter);
+                  Ind : Iir;
+               begin
+                  Ind := Instantiate_Iir (Get_Subtype_Indication (Inter),
+                                          Is_Ref);
+                  Set_Subtype_Indication (Res, Ind);
+                  Set_Type (Res, Get_Type_Of_Subtype_Indication (Ind));
+                  Set_Mode (Res, Get_Mode (Inter));
+                  Set_Has_Mode (Res, Get_Has_Mode (Inter));
+                  Set_Has_Class (Res, Get_Has_Class (Inter));
+                  Set_Has_Identifier_List
+                    (Res, Get_Has_Identifier_List (Inter));
+                  Set_Expr_Staticness (Res, Get_Expr_Staticness (Inter));
+                  Set_Name_Staticness (Res, Get_Name_Staticness (Inter));
+                  Set_Default_Value
+                    (Res, Instantiate_Iir (Get_Default_Value (Inter), Is_Ref));
+                  Set_Is_Ref (Res, Is_Ref);
+               end;
             when Iir_Kind_Interface_Package_Declaration =>
                Set_Uninstantiated_Package_Decl
                  (Res, Get_Uninstantiated_Package_Decl (Inter));
@@ -774,13 +801,19 @@ package body Vhdl.Sem_Inst is
                end if;
             when Iir_Kind_Interface_Type_Declaration =>
                declare
+                  Inter_Type : constant Iir := Get_Type (Inter);
                   Def : Iir;
                begin
                   --  Also instantiate the interface type definition.
-                  Def := Instantiate_Iir (Get_Type (Inter), False);
+                  Def := Instantiate_Iir (Inter_Type, False);
                   Set_Type (Res, Def);
                   Set_Interface_Type_Definition (Res, Def);
                   Set_Is_Ref (Res, True);
+
+                  Set_Interface_Type_Subprograms
+                    (Res,
+                     Instantiate_Iir_Chain
+                       (Get_Interface_Type_Subprograms (Inter)));
                end;
             when Iir_Kinds_Interface_Subprogram_Declaration =>
                Sem_Utils.Compute_Subprogram_Hash (Res);
@@ -997,40 +1030,13 @@ package body Vhdl.Sem_Inst is
    end Set_Instance_On_Chain;
 
    --  In ASSOC (which is the association for interface INTER), adjust
-   --  references to the instance.
-   --  INTER is the interface of the uninstantiated unit.
+   --  references to the instance, so that any name designating an interface
+   --  is substitued by the instance.
+   --  INTER is the interface of the instantiated unit.
    procedure Instantiate_Generic_Map (Assoc : Iir; Inter: Iir)
    is
-      Assoc_Formal : Iir;
+      Orig_Inter : constant Iir := Get_Origin (Inter);
    begin
-      --  Replace formal reference to the instance.
-      --  Cf Get_association_Interface
-      declare
-         Formal : Iir;
-      begin
-         Formal := Get_Formal (Assoc);
-         if Is_Valid (Formal) then
-            loop
-               case Get_Kind (Formal) is
-                  when Iir_Kind_Simple_Name
-                    | Iir_Kind_Operator_Symbol
-                    | Iir_Kind_Reference_Name =>
-                     Set_Named_Entity
-                       (Formal, Get_Instance (Get_Named_Entity (Formal)));
-                     exit;
-                  when Iir_Kind_Slice_Name
-                    | Iir_Kind_Indexed_Name
-                    | Iir_Kind_Selected_Element =>
-                     Formal := Get_Prefix (Formal);
-                  when others =>
-                     Error_Kind ("instantiate_generic_map", Formal);
-               end case;
-            end loop;
-         end if;
-      end;
-
-      Assoc_Formal := Get_Association_Interface (Assoc, Inter);
-
       case Get_Kind (Inter) is
          when Iir_Kind_Interface_Constant_Declaration =>
             --  If the type of the formal is an interface type also
@@ -1038,22 +1044,17 @@ package body Vhdl.Sem_Inst is
             --  to the associated type.
             declare
                Formal_Type : Iir;
-               Formal_Orig : Iir;
             begin
-               if Assoc_Formal = Null_Iir then
-                  return;
-               end if;
-               Formal_Type := Get_Type (Assoc_Formal);
+               Formal_Type := Get_Type (Inter);
                if Get_Kind (Formal_Type) = Iir_Kind_Interface_Type_Definition
                then
                   --  Type of the formal is an interface type.
                   --  Check if the interface type was declared in the same
                   --  interface list: must have the same parent.
-                  Formal_Orig := Get_Origin (Assoc_Formal);
                   if Get_Parent (Get_Type_Declarator (Formal_Type))
-                    = Get_Parent (Formal_Orig)
+                    = Get_Parent (Inter)
                   then
-                     Set_Type (Assoc_Formal, Get_Instance (Formal_Type));
+                     Set_Type (Inter, Get_Associated_Type (Formal_Type));
                   end if;
                end if;
             end;
@@ -1065,15 +1066,14 @@ package body Vhdl.Sem_Inst is
             declare
                Sub_Inst : constant Iir :=
                  Get_Named_Entity (Get_Actual (Assoc));
-               Pkg_Inter : constant Iir := Get_Origin (Assoc_Formal);
             begin
                --  Replace references of interface package to references
                --  to the actual package.
-               Set_Instance (Pkg_Inter, Sub_Inst);
-               Set_Associated_Package (Assoc_Formal, Sub_Inst);
-               Set_Instance_On_Chain (Get_Generic_Chain (Pkg_Inter),
+               Set_Instance (Orig_Inter, Sub_Inst);
+               Set_Associated_Package (Inter, Sub_Inst);
+               Set_Instance_On_Chain (Get_Generic_Chain (Orig_Inter),
                                       Get_Generic_Chain (Sub_Inst));
-               Set_Instance_On_Chain (Get_Declaration_Chain (Pkg_Inter),
+               Set_Instance_On_Chain (Get_Declaration_Chain (Orig_Inter),
                                       Get_Declaration_Chain (Sub_Inst));
             end;
          when Iir_Kind_Interface_Type_Declaration =>
@@ -1082,30 +1082,53 @@ package body Vhdl.Sem_Inst is
             --  Replace the incomplete interface type by the actual subtype
             --  indication.
             declare
-               Orig_Formal : constant Iir := Get_Origin (Assoc_Formal);
-               Inter_Type_Def : constant Iir := Get_Type (Orig_Formal);
+               Orig_Inter_Def : constant Iir := Get_Type (Orig_Inter);
+               Inter_Def : constant Iir :=
+                 Get_Interface_Type_Definition (Inter);
                Actual_Type : constant Iir := Get_Actual_Type (Assoc);
+               Assoc_Subprg_Chain : Iir;
+               Inter_Subprg_Chain : Iir;
             begin
-               Set_Instance (Inter_Type_Def, Actual_Type);
+               Set_Instance (Orig_Inter_Def, Actual_Type);
+               --  The associated type is a forward reference, so it can
+               --  be set to the actual type (which can be defined later,
+               --  as an anonymous typ in the association).
+               --  Let the type be an interface type definition.
+               Set_Associated_Type (Inter_Def, Actual_Type);
+
+               Set_Constraint_State
+                 (Inter_Def,
+                  Sem_Types.Get_Subtype_Indication_Constraint (Actual_Type));
+
+               --  Also associate subprograms.
+               Assoc_Subprg_Chain := Get_Subprogram_Association_Chain (Assoc);
+               Inter_Subprg_Chain := Get_Interface_Type_Subprograms (Inter);
+               while Assoc_Subprg_Chain /= Null_Node loop
+                  Set_Associated_Subprogram
+                    (Inter_Subprg_Chain,
+                     Get_Named_Entity (Get_Actual (Assoc_Subprg_Chain)));
+                  Assoc_Subprg_Chain := Get_Chain (Assoc_Subprg_Chain);
+                  Inter_Subprg_Chain := Get_Chain (Inter_Subprg_Chain);
+               end loop;
             end;
          when Iir_Kinds_Interface_Subprogram_Declaration =>
-            if Get_Kind (Assoc) = Iir_Kind_Association_Element_Open then
-               Set_Instance (Get_Origin (Assoc_Formal),
-                             Get_Open_Actual (Assoc));
-            else
-               pragma Assert
-                 (Get_Kind (Assoc) = Iir_Kind_Association_Element_Subprogram);
-               --  Replace the interface subprogram by the subprogram.
-               declare
-                  Actual_Subprg : constant Iir :=
-                    Get_Named_Entity (Get_Actual (Assoc));
-               begin
-                  Set_Instance (Get_Origin (Assoc_Formal), Actual_Subprg);
-                  --  Also set the associated subprogram to the interface
-                  --  subprogram, so that it can referenced through its name.
-                  Set_Associated_Subprogram (Assoc_Formal, Actual_Subprg);
-               end;
-            end if;
+            declare
+               Actual_Subprg : Iir;
+            begin
+               if Get_Kind (Assoc) = Iir_Kind_Association_Element_Open then
+                  Actual_Subprg := Get_Open_Actual (Assoc);
+               else
+                  pragma Assert
+                    (Get_Kind (Assoc)
+                       = Iir_Kind_Association_Element_Subprogram);
+                  --  Replace the interface subprogram by the subprogram.
+                  Actual_Subprg := Get_Named_Entity (Get_Actual (Assoc));
+               end if;
+               Set_Instance (Orig_Inter, Actual_Subprg);
+               --  Also set the associated subprogram to the interface
+               --  subprogram, so that it can referenced through its name.
+               Set_Associated_Subprogram (Inter, Actual_Subprg);
+            end;
          when Iir_Kind_Error =>
             null;
          when others =>
@@ -1113,17 +1136,60 @@ package body Vhdl.Sem_Inst is
       end case;
    end Instantiate_Generic_Map;
 
-   procedure Instantiate_Generic_Map_Chain (Inst : Iir; Pkg : Iir)
+   --  Like Get_Interface_Of_Formal, but also change it to the instantiated
+   --  interface.
+   function Replace_Formal_Name (Name : Iir) return Iir
+   is
+      Formal : Iir;
+      Res : Iir;
+   begin
+      Formal := Name;
+      loop
+         case Get_Kind (Formal) is
+            when Iir_Kind_Simple_Name
+              | Iir_Kind_Operator_Symbol
+              | Iir_Kind_Reference_Name =>
+               Res := Get_Instance (Get_Named_Entity (Formal));
+               Set_Named_Entity (Formal, Res);
+               return Res;
+            when Iir_Kind_Slice_Name
+              | Iir_Kind_Indexed_Name
+              | Iir_Kind_Selected_Element =>
+               Formal := Get_Prefix (Formal);
+            when others =>
+               Error_Kind ("replace_formal_name", Formal);
+         end case;
+      end loop;
+   end Replace_Formal_Name;
+
+   --  INST is the package/subprogram instantiation declaration.
+   --  (or the instantiated package interface - TBC)
+   procedure Instantiate_Generic_Map_Chain (Inter_Parent : Iir;
+                                            Map_Parent : Iir;
+                                            Pkg : Iir)
    is
       pragma Unreferenced (Pkg);
       Assoc, Inter : Iir;
       Inter_Iter : Iir;
+      Formal : Iir;
    begin
-      Assoc := Get_Generic_Map_Aspect_Chain (Inst);
-      Inter_Iter := Get_Generic_Chain (Inst);
+      Assoc := Get_Generic_Map_Aspect_Chain (Map_Parent);
+      Inter_Iter := Get_Generic_Chain (Inter_Parent);
       while Is_Valid (Assoc) loop
-         Inter := Get_Association_Interface (Assoc, Inter_Iter);
-         Instantiate_Generic_Map (Assoc, Inter);
+         --  Like Get_Association_interface, but...
+         Formal := Get_Formal (Assoc);
+         if Formal = Null_Iir then
+            --  The instantiated interface.
+            Inter := Inter_Iter;
+         else
+            --  ... get the interface from the association and also redirect
+            --  it to the instantiated interface.
+            Inter := Replace_Formal_Name (Formal);
+         end if;
+         --  In case of error...
+         if Inter /= Null_Iir then
+            Instantiate_Generic_Map (Assoc, Inter);
+         end if;
          Next_Association_Interface (Assoc, Inter_Iter);
       end loop;
    end Instantiate_Generic_Map_Chain;
@@ -1165,7 +1231,7 @@ package body Vhdl.Sem_Inst is
       Set_Generic_Chain
         (Inst,
          Instantiate_Generic_Chain (Inst, Get_Generic_Chain (Subprg), True));
-      Instantiate_Generic_Map_Chain (Inst, Subprg);
+      Instantiate_Generic_Map_Chain (Inst, Inst, Subprg);
       if Get_Kind (Subprg) = Iir_Kind_Function_Instantiation_Declaration then
          Set_Return_Type (Inst, Instantiate_Iir (Subprg, True));
       end if;
@@ -1196,13 +1262,13 @@ package body Vhdl.Sem_Inst is
       --  For Parent: the instance of PKG is INST.
       Set_Origin (Pkg, Inter);
 
-      Is_Within_Shared_Instance := not Get_Macro_Expanded_Flag (Pkg);
+      Is_Within_Shared_Instance := not Get_Macro_Expand_Flag (Pkg);
 
       --  Manually instantiate the package declaration.
       Set_Generic_Chain (Inter,
                          Instantiate_Generic_Chain
                            (Inter, Get_Generic_Chain (Header), Is_Inter));
-      Instantiate_Generic_Map_Chain (Inter, Pkg);
+      Instantiate_Generic_Map_Chain (Inter, Inter, Pkg);
       Set_Declaration_Chain
         (Inter, Instantiate_Iir_Chain (Get_Declaration_Chain (Pkg)));
       Set_Attribute_Value_Chain
@@ -1223,14 +1289,148 @@ package body Vhdl.Sem_Inst is
       Instantiate_Package (Inter, Pkg, True);
    end Instantiate_Interface_Package_Declaration;
 
+   function Has_Unbounded_Type_Interface (Header : Iir) return Boolean
+   is
+      Inter : Iir;
+      Def : Iir;
+   begin
+      Inter := Get_Generic_Chain (Header);
+      while Inter /= Null_Iir loop
+         if Get_Kind (Inter) = Iir_Kind_Interface_Type_Declaration then
+            Def := Get_Interface_Type_Definition (Inter);
+            Def := Get_Associated_Type (Def);
+            if Get_Kind (Def) in Iir_Kinds_Composite_Type_Definition
+              and then Get_Constraint_State (Def) /= Fully_Constrained
+            then
+               return True;
+            end if;
+         end if;
+         Inter := Get_Chain (Inter);
+      end loop;
+      return False;
+   end Has_Unbounded_Type_Interface;
+
+   procedure Reanalyze_Instantiated_Declarations (Chain : Iir)
+   is
+      Decl : Iir;
+   begin
+      Decl := Chain;
+      while Decl /= Null_Iir loop
+         case Get_Kind (Decl) is
+            when Iir_Kind_Type_Declaration =>
+               --  Adjust constraints, staticness...
+               Sem_Types.Reanalyze_Type_Definition
+                 (Get_Type_Definition (Decl));
+            when Iir_Kinds_Subprogram_Declaration =>
+               --  TODO: check no access type in interfaces ?
+               null;
+            when Iir_Kind_Protected_Type_Body =>
+               Reanalyze_Instantiated_Declarations
+                 (Get_Declaration_Chain (Decl));
+            when Iir_Kind_Variable_Declaration =>
+               Sem_Decls.Check_Object_Declaration (Decl);
+            when others =>
+               --  Error_Kind ("reanalyze_instantiated_declarations", Decl);
+               null;
+         end case;
+         Decl := Get_Chain (Decl);
+      end loop;
+   end Reanalyze_Instantiated_Declarations;
+
    procedure Instantiate_Package_Declaration (Inst : Iir; Pkg : Iir) is
    begin
       Instantiate_Package (Inst, Pkg, False);
+
+      if Has_Unbounded_Type_Interface (Inst) then
+         Reanalyze_Instantiated_Declarations (Get_Declaration_Chain (Inst));
+      end if;
    end Instantiate_Package_Declaration;
+
+   --  Adjust references to interfaces:
+   --  * references to an interface object are redirected to the instantiated
+   --    interface object,
+   --  * references to an interface type or subprogram are redirected to the
+   --    actual type or subprogram.
+   --  ORIG_PARENT is the parent of the original generic chain,
+   --  INST_PARENT is the parent of the instantiated generic chain,
+   --  MAP_PARENT is the parent of the association map (the component
+   --   instantiation or the package instantiation).  The formals of it (if
+   --   present) refers to the instantiated interface (for packages).
+   procedure Instantiate_Interface_References (Orig_Parent : Iir;
+                                               Inst_Parent : Iir;
+                                               Map_Parent : Iir)
+   is
+      Orig_El : Iir;
+      Inst_El : Iir;
+      Inter_El : Iir;
+      Inter_Assoc : Iir;
+      Assoc_El : Iir;
+   begin
+      --  In the arch/body, references to interface object are redirected to
+      --  the instantiated interface objects (of the entity or package spec).
+      Orig_El := Get_Generic_Chain (Orig_Parent);
+      Inst_El := Get_Generic_Chain (Inst_Parent);
+      while Is_Valid (Orig_El) loop
+         if Get_Kind (Orig_El)
+           not in Iir_Kinds_Interface_Subprogram_Declaration
+         then
+            Set_Instance (Orig_El, Inst_El);
+         end if;
+         Orig_El := Get_Chain (Orig_El);
+         Inst_El := Get_Chain (Inst_El);
+      end loop;
+
+      --  In the arch/body, references to interface type are substitued to the
+      --  mapped type.
+      Assoc_El := Get_Generic_Map_Aspect_Chain (Map_Parent);
+      Inter_Assoc := Get_Generic_Chain (Inst_Parent);
+      while Is_Valid (Assoc_El) loop
+         --  Note: INTER_ASSOC references the original node.
+         Inter_El := Get_Association_Interface (Assoc_El, Inter_Assoc);
+         Orig_El := Get_Origin (Inter_El);
+         case Get_Kind (Inter_El) is
+            when Iir_Kind_Interface_Type_Declaration =>
+               --  Redirect the interface type definition.
+               Set_Instance (Get_Interface_Type_Definition (Orig_El),
+                             Get_Actual_Type (Assoc_El));
+               --  Implicit operators.
+               declare
+                  Imp_Inter : Iir;
+                  Imp_Assoc : Iir;
+               begin
+                  Imp_Assoc := Get_Subprogram_Association_Chain (Assoc_El);
+                  Imp_Inter := Get_Interface_Type_Subprograms (Orig_El);
+                  while Is_Valid (Imp_Inter) and Is_Valid (Imp_Assoc) loop
+                     Set_Instance
+                       (Imp_Inter,
+                        Get_Named_Entity (Get_Actual (Imp_Assoc)));
+                     Imp_Inter := Get_Chain (Imp_Inter);
+                     Imp_Assoc := Get_Chain (Imp_Assoc);
+                  end loop;
+               end;
+
+            when Iir_Kinds_Interface_Subprogram_Declaration =>
+               if Get_Kind (Assoc_El) = Iir_Kind_Association_Element_Open then
+                  Set_Instance (Orig_El, Get_Open_Actual (Assoc_El));
+               else
+                  Set_Instance (Orig_El,
+                                Get_Named_Entity (Get_Actual (Assoc_El)));
+               end if;
+
+            when Iir_Kind_Interface_Constant_Declaration =>
+               null;
+            when others =>
+               --  TODO.
+               raise Internal_Error;
+         end case;
+         Next_Association_Interface (Assoc_El, Inter_Assoc);
+      end loop;
+   end Instantiate_Interface_References;
 
    function Instantiate_Package_Body (Inst : Iir) return Iir
    is
       Pkg : constant Iir := Get_Uninstantiated_Package_Decl (Inst);
+      Hdr : constant Iir := Get_Package_Header (Pkg);
       Prev_Instance_File : constant Source_File_Entry := Instance_File;
       Mark : constant Instance_Index_Type := Prev_Instance_Table.Last;
       Bod : constant Iir := Get_Package_Body (Pkg);
@@ -1244,75 +1444,10 @@ package body Vhdl.Sem_Inst is
       --  References to package specification (and its declarations) will
       --  be redirected to the package instantiation.
       Set_Instance (Pkg, Inst);
-      declare
-         Pkg_Hdr : constant Iir := Get_Package_Header (Pkg);
-         Pkg_El : Iir;
-         Inst_El : Iir;
-         Inter_El : Iir;
-         Inter : Iir;
-      begin
-         --  In the body, references to interface object are redirected to the
-         --  instantiated interface objects.
-         Pkg_El := Get_Generic_Chain (Pkg_Hdr);
-         Inst_El := Get_Generic_Chain (Inst);
-         while Is_Valid (Pkg_El) loop
-            if Get_Kind (Pkg_El) in Iir_Kinds_Interface_Object_Declaration then
-               Set_Instance (Pkg_El, Inst_El);
-            end if;
-            Pkg_El := Get_Chain (Pkg_El);
-            Inst_El := Get_Chain (Inst_El);
-         end loop;
 
-         --  In the body, references to interface type are substitued to the
-         --  mapped type.
-         Inst_El := Get_Generic_Map_Aspect_Chain (Inst);
-         Inter_El := Get_Generic_Chain (Inst);
-         while Is_Valid (Inst_El) loop
-            case Get_Kind (Inter_El) is
-               when Iir_Kind_Interface_Type_Declaration =>
-                  Inter := Get_Association_Interface (Inst_El, Inter_El);
-                  --  Redirect the interface type definition.
-                  Set_Instance (Get_Type (Get_Origin (Inter)),
-                                Get_Actual_Type (Inst_El));
-                  --  And also the interface type declaration.
-                  Set_Instance (Get_Origin (Inter), Inter);
-                  --  Implicit operators.
-                  declare
-                     Imp_Inter : Iir;
-                     Imp_Assoc : Iir;
-                  begin
-                     Imp_Assoc := Get_Subprogram_Association_Chain (Inst_El);
-                     Imp_Inter := Get_Interface_Type_Subprograms
-                       (Get_Origin (Inter));
-                     while Is_Valid (Imp_Inter) and Is_Valid (Imp_Assoc) loop
-                        Set_Instance
-                          (Imp_Inter,
-                           Get_Named_Entity (Get_Actual (Imp_Assoc)));
-                        Imp_Inter := Get_Chain (Imp_Inter);
-                        Imp_Assoc := Get_Chain (Imp_Assoc);
-                     end loop;
-                  end;
+      --  Redirect references to interfaces.
+      Instantiate_Interface_References (Hdr, Inst, Inst);
 
-               when Iir_Kinds_Interface_Subprogram_Declaration =>
-                  Inter := Get_Association_Interface (Inst_El, Inter_El);
-                  if Get_Kind (Inst_El) = Iir_Kind_Association_Element_Open
-                  then
-                     Set_Instance (Get_Origin (Inter),
-                                   Get_Open_Actual (Inst_El));
-                  else
-                     Set_Instance (Get_Origin (Inter),
-                                   Get_Named_Entity (Get_Actual (Inst_El)));
-                  end if;
-
-               when Iir_Kind_Interface_Constant_Declaration =>
-                  null;
-               when others =>
-                  --  TODO.
-                  raise Internal_Error;
-            end case;
-            Next_Association_Interface (Inst_El, Inter_El);
-         end loop;
-      end;
       Set_Instance_On_Chain
         (Get_Declaration_Chain (Pkg), Get_Declaration_Chain (Inst));
 
@@ -1320,6 +1455,9 @@ package body Vhdl.Sem_Inst is
 
       Res := Create_Iir (Iir_Kind_Package_Instantiation_Body);
       Location_Copy (Res, Inst);
+
+      Set_Instance (Bod, Res);
+
       Set_Declaration_Chain
         (Res, Instantiate_Iir_Chain (Get_Declaration_Chain (Bod)));
       Set_Attribute_Value_Chain
@@ -1331,26 +1469,32 @@ package body Vhdl.Sem_Inst is
       Instance_File := Prev_Instance_File;
       Restore_Origin (Mark);
 
+      if Has_Unbounded_Type_Interface (Inst) then
+         Reanalyze_Instantiated_Declarations (Get_Declaration_Chain (Res));
+      end if;
+
       return Res;
    end Instantiate_Package_Body;
 
-   function Instantiate_Component_Declaration (Comp : Iir; Map : Iir)
-                                              return Iir
+   function Instantiate_Component_Entity_Common (Comp : Iir; Map_Parent : Iir)
+                                                return Iir
    is
       Prev_Instance_File : constant Source_File_Entry := Instance_File;
       Mark : constant Instance_Index_Type := Prev_Instance_Table.Last;
+      Kind : constant Iir_Kind := Get_Kind (Comp);
       Prev_Orig : Iir;
       Inst : Iir;
    begin
       --  Create the component/entity.
-      Inst := Create_Iir (Get_Kind (Comp));
+      Inst := Create_Iir (Kind);
 
       --  Build and set the new location.
-      Create_Relocation (Map, Comp);
+      Create_Relocation (Map_Parent, Comp);
       Set_Location (Inst, Relocate (Get_Location (Comp)));
 
       --  Be sure Get_Origin_Priv can be called on existing nodes.
       Expand_Origin_Table;
+      Set_Origin (Inst, Comp);
 
       --  For Parent: the instance of PKG is INST.
       Prev_Orig := Get_Origin (Comp);
@@ -1360,28 +1504,83 @@ package body Vhdl.Sem_Inst is
       Set_Generic_Chain
         (Inst,
          Instantiate_Generic_Chain (Inst, Get_Generic_Chain (Comp), True));
-
-      declare
-         Assoc, Inter, Inter_Iter : Iir;
-      begin
-         Assoc := Get_Generic_Map_Aspect_Chain (Map);
-         Inter_Iter := Get_Generic_Chain (Inst);
-         while Is_Valid (Assoc) loop
-            Inter := Get_Association_Interface (Assoc, Inter_Iter);
-            Instantiate_Generic_Map (Assoc, Inter);
-            Next_Association_Interface (Assoc, Inter_Iter);
-         end loop;
-      end;
+      Instantiate_Generic_Map_Chain (Inst, Map_Parent, Null_Iir);
 
       Set_Port_Chain
         (Inst, Instantiate_Iir_Chain (Get_Port_Chain (Comp)));
+
+      if Kind = Iir_Kind_Entity_Declaration then
+         Set_Declaration_Chain
+           (Inst, Instantiate_Iir_Chain (Get_Declaration_Chain (Comp)));
+         Set_Concurrent_Statement_Chain
+           (Inst,
+            Instantiate_Iir_Chain (Get_Concurrent_Statement_Chain (Comp)));
+         Set_Attribute_Value_Chain
+           (Inst, Instantiate_Iir (Get_Attribute_Value_Chain (Comp), True));
+         Instantiate_Attribute_Value_Chain (Inst);
+
+         --  TODO: vunit ?
+      end if;
+
+      Set_Macro_Expand_Flag (Inst, Get_Macro_Expand_Flag (Comp));
 
       Set_Origin (Comp, Prev_Orig);
 
       Instance_File := Prev_Instance_File;
       Restore_Origin (Mark);
       return Inst;
+   end Instantiate_Component_Entity_Common;
+
+   function Instantiate_Component_Declaration (Comp : Iir; Map_Parent : Iir)
+                                              return Iir is
+   begin
+      return Instantiate_Component_Entity_Common (Comp, Map_Parent);
    end Instantiate_Component_Declaration;
+
+   function Instantiate_Entity_Declaration (Ent : Iir; Map_Parent : Iir)
+                                           return Iir is
+   begin
+      return Instantiate_Component_Entity_Common (Ent, Map_Parent);
+   end Instantiate_Entity_Declaration;
+
+   --  Instantiate architecture ARCH for *instantiated* entity ENT.
+   --  STMT is the statement that instantiated ENT.
+   function Instantiate_Architecture
+     (Arch : Iir; Ent : Iir; Stmt : Iir; Map_Parent : Iir) return Iir
+   is
+      Ent_Orig : constant Iir := Get_Entity (Arch);
+      Prev_Instance_File : constant Source_File_Entry := Instance_File;
+      Mark : constant Instance_Index_Type := Prev_Instance_Table.Last;
+      Res : Iir;
+   begin
+      Create_Relocation (Stmt, Arch);
+
+      --  Be sure Get_Origin_Priv can be called on existing nodes.
+      Expand_Origin_Table;
+
+      --  Redirect references to interfaces.
+      Instantiate_Interface_References (Ent_Orig, Ent, Map_Parent);
+
+      --  Hummm.
+      Set_Instance_On_Chain
+        (Get_Port_Chain (Ent_Orig), Get_Port_Chain (Ent));
+
+      Set_Instance_On_Chain
+        (Get_Declaration_Chain (Ent_Orig), Get_Declaration_Chain (Ent));
+
+      --  Instantiate the architecture.
+
+      Res := Instantiate_Iir (Arch, False);
+
+      Set_Named_Entity (Get_Entity_Name (Res), Ent);
+      Set_Design_Unit (Res, Null_Iir);
+
+      --  Restore.
+      Instance_File := Prev_Instance_File;
+      Restore_Origin (Mark);
+
+      return Res;
+   end Instantiate_Architecture;
 
    procedure Substitute_On_Iir_List (L : Iir_List; E : Iir; Rep : Iir);
 

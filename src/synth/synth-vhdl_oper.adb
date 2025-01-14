@@ -892,6 +892,15 @@ package body Synth.Vhdl_Oper is
          return Create_Value_Net (Edge, Res_Typ);
       end Synth_Posedge;
 
+      function Synth_Negedge return Valtyp
+      is
+         Edge : Net;
+      begin
+         Edge := Build_Negedge (Ctxt, Get_Net (Ctxt, L));
+         Set_Location (Edge, Expr);
+         return Create_Value_Net (Edge, Res_Typ);
+      end Synth_Negedge;
+
       function Error_Unhandled return Valtyp is
       begin
          Error_Msg_Synth
@@ -921,7 +930,7 @@ package body Synth.Vhdl_Oper is
                return Create_Value_Memtyp
                  (Hook_Bit_Falling_Edge.all (L, Res_Typ));
             end if;
-            raise Internal_Error;
+            return Synth_Negedge;
          when Iir_Predefined_Ieee_1164_Rising_Edge =>
             if Hook_Std_Rising_Edge /= null then
                return Create_Value_Memtyp
@@ -933,13 +942,7 @@ package body Synth.Vhdl_Oper is
                return Create_Value_Memtyp
                  (Hook_Std_Falling_Edge.all (L, Res_Typ));
             end if;
-            declare
-               Edge : Net;
-            begin
-               Edge := Build_Negedge (Ctxt, Get_Net (Ctxt, L));
-               Set_Location (Edge, Expr);
-               return Create_Value_Net (Edge, Res_Typ);
-            end;
+            return Synth_Negedge;
 
          when Iir_Predefined_Ieee_1164_Scalar_Not =>
             return Synth_Bit_Monadic (Id_Not);
@@ -1015,8 +1018,10 @@ package body Synth.Vhdl_Oper is
             end;
 
          when Iir_Predefined_Bit_And
-           | Iir_Predefined_Boolean_And
-           | Iir_Predefined_Ieee_1164_Scalar_And =>
+           | Iir_Predefined_Boolean_And =>
+            --  Short circuit.
+            raise Internal_Error;
+         when Iir_Predefined_Ieee_1164_Scalar_And =>
             return Synth_Bit_Dyadic (Id_And);
          when Iir_Predefined_Bit_Xor
            | Iir_Predefined_Boolean_Xor
@@ -1199,8 +1204,8 @@ package body Synth.Vhdl_Oper is
                   Cst := R;
                   Oper := L;
                else
-                  Warning_Msg_Synth
-                    (+Expr, "no operand of ?= is constant, handled like =");
+                  --  There was a warning as '?=' is handled like '=',
+                  --  but the result is std_logic - so still useful.
                   return Synth_Compare (Id_Eq, Logic_Type);
                end if;
                Res := Synth_Match (Ctxt, Cst, Oper, Expr);
@@ -1228,8 +1233,6 @@ package body Synth.Vhdl_Oper is
                   Cst := R;
                   Oper := L;
                else
-                  Warning_Msg_Synth
-                    (+Expr, "no operand of ?/= is constant, handled like /=");
                   return Synth_Compare (Id_Ne, Logic_Type);
                end if;
                Res := Synth_Match (Ctxt, Cst, Oper, Expr, Id_Ne);
@@ -1266,7 +1269,7 @@ package body Synth.Vhdl_Oper is
                Result_Typ : Type_Acc;
                N : Net;
             begin
-               Check_Matching_Bounds (Le_Typ, R.Typ, Expr);
+               Check_Matching_Bounds (Syn_Inst, Le_Typ, R.Typ, Expr);
                N := Build2_Concat2 (Ctxt, Ln, Get_Net (Ctxt, R));
                Set_Location (N, Expr);
                Bnd := Create_Bounds_From_Length
@@ -1289,7 +1292,7 @@ package body Synth.Vhdl_Oper is
                Result_Typ : Type_Acc;
                N : Net;
             begin
-               Check_Matching_Bounds (L.Typ, Re_Typ, Expr);
+               Check_Matching_Bounds (Syn_Inst, L.Typ, Re_Typ, Expr);
                N := Build2_Concat2 (Ctxt, Get_Net (Ctxt, L), Rn);
                Set_Location (N, Expr);
                Bnd := Create_Bounds_From_Length
@@ -1310,7 +1313,7 @@ package body Synth.Vhdl_Oper is
                Bnd : Bound_Type;
                Result_Typ : Type_Acc;
             begin
-               Check_Matching_Bounds (L.Typ, R.Typ, Expr);
+               Check_Matching_Bounds (Syn_Inst, L.Typ, R.Typ, Expr);
                N := Build2_Concat2
                  (Ctxt, Get_Net (Ctxt, L), Get_Net (Ctxt, R));
                Set_Location (N, Expr);
@@ -1333,7 +1336,7 @@ package body Synth.Vhdl_Oper is
                Result_Typ : Type_Acc;
                N : Net;
             begin
-               Check_Matching_Bounds (Le_Typ, Re_Typ, Expr);
+               Check_Matching_Bounds (Syn_Inst, Le_Typ, Re_Typ, Expr);
                N := Build2_Concat2 (Ctxt, Ln, Rn);
                Set_Location (N, Expr);
                Bnd := Create_Bounds_From_Length
@@ -1380,6 +1383,21 @@ package body Synth.Vhdl_Oper is
          when Iir_Predefined_Integer_Rem =>
             return Synth_Int_Dyadic (Id_Srem);
          when Iir_Predefined_Integer_Exp =>
+            if Is_Static_Val (L.Val) then
+               --  Support 2**X
+               declare
+                  Lint : constant Int64 := Get_Static_Discrete (L);
+                  N : Net;
+               begin
+                  if Lint = 2 then
+                     N := Build_Const_UB32 (Ctxt, 1, L.Typ.W);
+                     N := Build_Shift_Rotate
+                       (Ctxt, Id_Lsl, N, Get_Net (Ctxt, R));
+                     Set_Location (N, Expr);
+                     return Create_Value_Net (N, Res_Typ);
+                  end if;
+               end;
+            end if;
             Error_Msg_Synth
               (Syn_Inst, Expr, "non-constant exponentiation not supported");
             return No_Valtyp;
@@ -1960,12 +1978,17 @@ package body Synth.Vhdl_Oper is
             --  ">=" (Signed, Unsigned)
             return Synth_Compare_Sgn_Uns (Id_Sge, Res_Typ);
 
-         when Iir_Predefined_Ieee_Numeric_Std_Sra_Sgn_Int =>
+         when Iir_Predefined_Ieee_Numeric_Std_Sra_Sgn_Int
+            | Iir_Predefined_Ieee_Numeric_Std_Sra_Uns_Int =>
             return Synth_Shift (Id_Asr, Id_Lsl);
+
+         when Iir_Predefined_Ieee_Numeric_Std_Sla_Sgn_Int =>
+            return Synth_Shift (Id_Lsl, Id_Asr);
 
          when Iir_Predefined_Ieee_Numeric_Std_Sll_Uns_Int
             | Iir_Predefined_Ieee_Numeric_Std_Sll_Sgn_Int
-            | Iir_Predefined_Ieee_1164_Vector_Sll =>
+            | Iir_Predefined_Ieee_1164_Vector_Sll
+            | Iir_Predefined_Ieee_Numeric_Std_Sla_Uns_Int =>
             return Synth_Shift (Id_Lsl, Id_Lsr);
 
          when Iir_Predefined_Ieee_Numeric_Std_Srl_Uns_Int
@@ -2030,7 +2053,8 @@ package body Synth.Vhdl_Oper is
             return Create_Value_Net (Get_Net (Ctxt, L), Res_Typ);
 
          when Iir_Predefined_Ieee_Numeric_Std_Touns_Nat_Nat_Uns
-            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Unsigned_Int =>
+            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Unsigned_Int
+            | Iir_Predefined_Ieee_Numeric_Std_Unsigned_To_Slv_Nat_Nat =>
             return Synth_Conv_Vector (False);
          when Iir_Predefined_Ieee_Numeric_Std_Touns_Nat_Uns_Uns =>
             declare
@@ -2039,7 +2063,8 @@ package body Synth.Vhdl_Oper is
                return Synth_Resize (Ctxt, L, B.Len, False, Expr);
             end;
          when Iir_Predefined_Ieee_Numeric_Std_Tosgn_Int_Nat_Sgn
-            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Vector_Int =>
+            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Vector_Int
+            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Signed_Int =>
             return Synth_Conv_Vector (True);
          when Iir_Predefined_Ieee_Numeric_Std_Toint_Uns_Nat
             | Iir_Predefined_Ieee_Numeric_Std_Unsigned_To_Integer_Slv_Nat
@@ -2057,10 +2082,14 @@ package body Synth.Vhdl_Oper is
               (Synth_Sresize (Ctxt, L, Res_Typ.W, Expr), Res_Typ);
 
          when Iir_Predefined_Ieee_Numeric_Std_Resize_Uns_Nat
+            | Iir_Predefined_Ieee_Numeric_Std_Unsigned_Resize_Slv_Nat
             | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Vector_Uns
             | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Unsigned_Uns
             | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Unsigned_Log
+            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Signed_Log
+            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Signed_Uns
             | Iir_Predefined_Ieee_Std_Logic_Arith_Ext =>
+            --  Unsigned to unsigned (resize)
             declare
                W : Width;
             begin
@@ -2090,6 +2119,7 @@ package body Synth.Vhdl_Oper is
          when Iir_Predefined_Ieee_Numeric_Std_Resize_Sgn_Nat
             | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Vector_Sgn
             | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Unsigned_Sgn
+            | Iir_Predefined_Ieee_Std_Logic_Arith_Conv_Signed_Sgn
             | Iir_Predefined_Ieee_Std_Logic_Arith_Sxt =>
             if not Is_Static (R.Val) then
                Error_Msg_Synth
@@ -2110,15 +2140,20 @@ package body Synth.Vhdl_Oper is
             | Iir_Predefined_Ieee_Std_Logic_Arith_Shl_Uns
             | Iir_Predefined_Ieee_Std_Logic_Arith_Shl_Sgn
             | Iir_Predefined_Ieee_Std_Logic_Unsigned_Shl
-            | Iir_Predefined_Ieee_Std_Logic_Signed_Shl =>
+            | Iir_Predefined_Ieee_Std_Logic_Signed_Shl
+            | Iir_Predefined_Ieee_Numeric_Std_Unsigned_Shift_Left =>
+            --  Shift left (with unsigned count)
             return Synth_Shift_Rotate (Ctxt, Id_Lsl, L, R, Expr);
          when Iir_Predefined_Ieee_Numeric_Std_Shf_Right_Uns_Nat
             | Iir_Predefined_Ieee_Std_Logic_Arith_Shr_Uns
-            | Iir_Predefined_Ieee_Std_Logic_Unsigned_Shr =>
+            | Iir_Predefined_Ieee_Std_Logic_Unsigned_Shr
+            | Iir_Predefined_Ieee_Numeric_Std_Unsigned_Shift_Right =>
+            --  Logical shift right (with unsigned count)
             return Synth_Shift_Rotate (Ctxt, Id_Lsr, L, R, Expr);
          when Iir_Predefined_Ieee_Numeric_Std_Shf_Right_Sgn_Nat
             | Iir_Predefined_Ieee_Std_Logic_Arith_Shr_Sgn
             | Iir_Predefined_Ieee_Std_Logic_Signed_Shr =>
+            --  Arithmetic shift right (with unsigned count)
             return Synth_Shift_Rotate (Ctxt, Id_Asr, L, R, Expr);
          when Iir_Predefined_Ieee_Numeric_Std_Rot_Left_Uns_Nat =>
             return Synth_Shift_Rotate (Ctxt, Id_Rol, L, R, Expr);

@@ -506,18 +506,26 @@ package body Trans.Chap6 is
    function Translate_Indexed_Name_By_Offset
      (Prefix : Mnode; Prefix_Type : Iir; Offset : O_Dnode) return Mnode
    is
+      Pfx_Tinfo : constant Type_Info_Acc := Get_Type_Info (Prefix);
       El_Type  : constant Iir := Get_Element_Subtype (Prefix_Type);
       El_Tinfo : constant Type_Info_Acc := Get_Info (El_Type);
       Kind     : constant Object_Kind_Type := Get_Object_Kind (Prefix);
+      Pfx : Mnode;
       Fat_Res : Mnode;
       Base : Mnode;
       Bounds : Mnode;
    begin
-      Base := Chap3.Index_Array (Prefix, Prefix_Type, New_Obj_Value (Offset));
+      if Is_Unbounded_Type (Pfx_Tinfo) then
+         Pfx := Stabilize (Prefix);
+      else
+         Pfx := Prefix;
+      end if;
+
+      Base := Chap3.Index_Array (Pfx, Prefix_Type, New_Obj_Value (Offset));
 
       if Is_Unbounded_Type (El_Tinfo) then
          Fat_Res := Create_Temp (El_Tinfo, Kind);
-         Bounds := Chap3.Get_Composite_Bounds (Prefix);
+         Bounds := Chap3.Get_Composite_Bounds (Pfx);
          Bounds := Chap3.Array_Bounds_To_Element_Bounds (Bounds, Prefix_Type);
 
          --  Assignment to M2Lp works as this is not a copy.
@@ -1029,12 +1037,12 @@ package body Trans.Chap6 is
          Stable_Prefix := Prefix;
       end if;
 
-      --  Get the base.
-      Base := Chap3.Get_Composite_Base (Stable_Prefix);
-
       if Prefix_Tinfo.Type_Mode = Type_Mode_Static_Record
         or else Is_Static_Type (El_Tinfo)
       then
+         --  Get the base.
+         Base := Chap3.Get_Composite_Base (Stable_Prefix);
+
          --  If the base element type is static or if the prefix is static,
          --  then the element can directly be accessed.
          Res := Lv2M (New_Selected_Element (M2Lv (Base), F), El_Tinfo, Kind);
@@ -1044,6 +1052,11 @@ package body Trans.Chap6 is
          Res_Addr := New_Convert_Ov
            (M2Addr (Res), Res_Tinfo.B.Base_Ptr_Type (Kind));
       else
+         Stabilize (Stable_Prefix);
+
+         --  Get the base.
+         Base := Chap3.Get_Composite_Base (Stable_Prefix);
+
          --  Unbounded or complex element.
          Stabilize (Base);
 
@@ -1183,7 +1196,8 @@ package body Trans.Chap6 is
                                Type_Info, Mode_Value);
             end;
 
-         when Iir_Kind_Object_Alias_Declaration =>
+         when Iir_Kind_Object_Alias_Declaration
+           | Iir_Kinds_External_Name =>
             --  Alias_Var is not like an object variable, since it is
             --  always a pointer to the aliased object.
             declare
@@ -1192,7 +1206,8 @@ package body Trans.Chap6 is
                pragma Assert (Mode <= Name_Info.Alias_Kind);
                case Type_Info.Type_Mode is
                   when Type_Mode_Unbounded_Array
-                     | Type_Mode_Unbounded_Record =>
+                    | Type_Mode_Unbounded_Record
+                    | Type_Mode_Protected =>
                      return Get_Var (Name_Info.Alias_Var (Mode), Type_Info,
                                      Mode);
                   when Type_Mode_Bounded_Arrays
@@ -1231,7 +1246,8 @@ package body Trans.Chap6 is
             pragma Assert (Mode = Mode_Value);
             return Translate_Interface_Name (Name, Name_Info, Mode_Value);
 
-         when Iir_Kind_Interface_Signal_Declaration =>
+         when Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration =>
             return Translate_Interface_Name (Name, Name_Info, Mode);
 
          when Iir_Kind_Indexed_Name =>
@@ -1302,12 +1318,14 @@ package body Trans.Chap6 is
             Translate_Signal (Get_Named_Entity (Name), Sig, Drv);
          when Iir_Kind_Signal_Declaration
            | Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration
            | Iir_Kind_Stable_Attribute
            | Iir_Kind_Quiet_Attribute
            | Iir_Kind_Delayed_Attribute
            | Iir_Kind_Transaction_Attribute
            | Iir_Kind_Guard_Signal_Declaration
-           | Iir_Kind_Object_Alias_Declaration =>
+           | Iir_Kind_Object_Alias_Declaration
+           | Iir_Kind_External_Signal_Name =>
             Translate_Signal_Base (Name, Sig, Drv);
          when Iir_Kind_Slice_Name =>
             declare
@@ -1359,7 +1377,8 @@ package body Trans.Chap6 is
    begin
       case Get_Kind (Name) is
          when Iir_Kind_Signal_Declaration
-           | Iir_Kind_Interface_Signal_Declaration =>
+           | Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration =>
             declare
                Name_Type : constant Iir := Get_Type (Name);
                Name_Info : constant Ortho_Info_Acc := Get_Info (Name);
@@ -1421,10 +1440,12 @@ package body Trans.Chap6 is
            | Iir_Kind_Guard_Signal_Declaration =>
             Sig := Get_Var (Name_Info.Signal_Sig, Type_Info, Mode_Signal);
             Val := Get_Var (Name_Info.Signal_Val, Type_Info, Mode_Value);
-         when Iir_Kind_Interface_Signal_Declaration =>
+         when Iir_Kind_Interface_Signal_Declaration
+            | Iir_Kind_Interface_View_Declaration =>
             Sig := Translate_Interface_Name (Name, Name_Info, Mode_Signal);
             Val := Translate_Interface_Name (Name, Name_Info, Mode_Value);
-         when Iir_Kind_Object_Alias_Declaration =>
+         when Iir_Kind_Object_Alias_Declaration
+            | Iir_Kind_External_Signal_Name =>
             Sig := Translate_Object_Alias_Name (Name, Mode_Signal);
             Val := Translate_Object_Alias_Name (Name, Mode_Value);
          when others =>

@@ -13,7 +13,7 @@
 --
 --  You should have received a copy of the GNU General Public License
 --  along with this program.  If not, see <gnu.org/licenses>.
-with Ada.Text_IO; use Ada.Text_IO;
+with Simple_IO;
 
 package body Binary_File.Memory is
    --  Absolute section.
@@ -99,6 +99,7 @@ package body Binary_File.Memory is
       type Seg_Size_Array is array (Segment_Kind) of Pc_Type;
       Seg_Size : Seg_Size_Array;
       Seg_Offs : Seg_Size_Array;
+      Seg_Base : Seg_Size_Array;
       Size : Pc_Type;
       Program_Seg : Memsegs.Memseg_Type;
       Program : Byte_Array_Acc;
@@ -135,9 +136,11 @@ package body Binary_File.Memory is
       Program_Seg := Memsegs.Create;
       Memsegs.Resize (Program_Seg, Natural (Size));
       Program := To_Byte_Array_Acc (Memsegs.Get_Address (Program_Seg));
-      Seg_Offs (Seg_Text) := 0;
-      Seg_Offs (Seg_Ro) := Seg_Size (Seg_Text);
-      Seg_Offs (Seg_Data) := Seg_Size (Seg_Text) + Seg_Size (Seg_Ro);
+      Seg_Base (Seg_Text) := 0;
+      Seg_Base (Seg_Ro) := Seg_Size (Seg_Text);
+      Seg_Base (Seg_Data) := Seg_Base (Seg_Ro) + Seg_Size (Seg_Ro);
+
+      Seg_Offs := Seg_Base;
 
       Sect := Section_Chain;
       while Sect /= null loop
@@ -147,7 +150,7 @@ package body Binary_File.Memory is
          begin
             if Seg /= Seg_None then
                --  From segment offset to image offset.
-               Sect.Img_Off := Sect.Img_Off + Seg_Offs (Seg);
+               Sect.Img_Off := Sect.Img_Off + Seg_Base (Seg);
 
                if Sect.Pc > 0 then
                   Off := Pow_Align (Off, Sect.Align);
@@ -176,14 +179,14 @@ package body Binary_File.Memory is
       Sect := Section_Chain;
       Error := False;
       while Sect /= null loop
---           Put_Line ("Section: " & Sect.Name.all & ", Flags:"
---                     & Section_Flags'Image (Sect.Flags));
+--         Simple_IO.Put_Line ("Section: " & Sect.Name.all & ", Flags:"
+--                               & Section_Flags'Image (Sect.Flags));
          Rel := Sect.First_Reloc;
          while Rel /= null loop
             N_Rel := Rel.Sect_Next;
             if Get_Scope (Rel.Sym) = Sym_Undef then
-               Put_Line ("symbol " & Get_Symbol_Name (Rel.Sym)
-                         & " is undefined");
+               Simple_IO.Put_Line ("symbol " & Get_Symbol_Name (Rel.Sym)
+                                     & " is undefined");
                Error := True;
             else
                Apply_Reloc (Sect, Rel);

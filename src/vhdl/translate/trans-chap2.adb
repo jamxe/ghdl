@@ -108,7 +108,8 @@ package body Trans.Chap2 is
                Mech := Pass_By_Address;
             end if;
             Info.Interface_Mechanism (Mode_Value) := Mech;
-         when Iir_Kind_Interface_Signal_Declaration =>
+         when Iir_Kind_Interface_Signal_Declaration
+            | Iir_Kind_Interface_View_Declaration =>
             Info.Interface_Mechanism (Mode_Signal) := Mech;
             --  Values are always passed by address.
             if Get_Kind (Spec) = Iir_Kind_Procedure_Declaration then
@@ -814,7 +815,12 @@ package body Trans.Chap2 is
       --  subprograms.
       Chap4.Translate_Declaration_Chain_Subprograms_Spec_Body (Decl);
 
-      Create_Package_Elaborator (Info);
+      if Flag_Elaboration or else Is_Nested_Package (Decl) then
+         Create_Package_Elaborator (Info);
+      else
+         Info.Package_Elab_Spec_Subprg := O_Dnode_Null;
+         Info.Package_Elab_Body_Subprg := O_Dnode_Null;
+      end if;
 
       if Flag_Rti then
          --  Generate RTI.
@@ -823,7 +829,9 @@ package body Trans.Chap2 is
 
       if Global_Storage /= O_Storage_External then
          --  Create elaboration procedure for the spec
-         Elab_Package_Internal (Decl, Header);
+         if Flag_Elaboration or else Is_Nested_Package (Decl) then
+            Elab_Package_Internal (Decl, Header);
+         end if;
       end if;
 
       --  Overwrite the value written by Translate_Package_Concrete_Common.
@@ -924,7 +932,7 @@ package body Trans.Chap2 is
       Prev_Subprg_Instance : Subprgs.Subprg_Instance_Stack;
       Mark  : Id_Mark_Type;
    begin
-      if Is_Uninst and then Get_Macro_Expanded_Flag (Decl) then
+      if Is_Uninst and then Get_Macro_Expand_Flag (Decl) then
          --  Nothing to do for macro-expanded packages.
          return;
       end if;
@@ -980,7 +988,7 @@ package body Trans.Chap2 is
       Prev_Subprg_Instance : Subprgs.Subprg_Instance_Stack;
       Mark  : Id_Mark_Type;
    begin
-      if Is_Uninst and then Get_Macro_Expanded_Flag (Spec) then
+      if Is_Uninst and then Get_Macro_Expand_Flag (Spec) then
          --  Nothing to do for macro-expanded packages.
          return;
       end if;
@@ -1020,7 +1028,7 @@ package body Trans.Chap2 is
       Mark : Id_Mark_Type;
    begin
       --  Skip uninstantiated package that have to be macro-expanded.
-      if Get_Macro_Expanded_Flag (Decl) then
+      if Get_Macro_Expand_Flag (Decl) then
          return;
       end if;
 
@@ -1041,7 +1049,7 @@ package body Trans.Chap2 is
       Header : Iir;
    begin
       --  Skip uninstantiated package that have to be macro-expanded.
-      if Get_Macro_Expanded_Flag (Decl) then
+      if Get_Macro_Expand_Flag (Decl) then
          return;
       end if;
 
@@ -1069,7 +1077,7 @@ package body Trans.Chap2 is
       Prev_Storage : constant O_Storage := Global_Storage;
       Prev_Subprg_Instance : Subprgs.Subprg_Instance_Stack;
    begin
-      if Is_Spec_Decl and then Get_Macro_Expanded_Flag (Spec) then
+      if Is_Spec_Decl and then Get_Macro_Expand_Flag (Spec) then
          return;
       end if;
 
@@ -1127,7 +1135,11 @@ package body Trans.Chap2 is
          Clear_Scope (Info.Package_Spec_Scope);
       end if;
 
-      if not Is_Nested and Flag_Elaboration then
+      if not Is_Nested
+        and then
+        (Flag_Elaboration
+           or else (Is_Spec_Decl and then Is_Uninstantiated_Package (Spec)))
+      then
          Elab_Package_Body (Spec, Bod);
       end if;
 
@@ -1149,10 +1161,6 @@ package body Trans.Chap2 is
 
    procedure Translate_Package_Body_Unit (Bod : Iir_Package_Body) is
    begin
-      if not Flag_Elaboration then
-         return;
-      end if;
-
       Translate_Package_Body_Internal (Bod);
    end Translate_Package_Body_Unit;
 
@@ -1167,10 +1175,6 @@ package body Trans.Chap2 is
       Final  : Boolean;
       Constr : O_Assoc_List;
    begin
-      if not Flag_Elaboration and not Is_Nested then
-         return;
-      end if;
-
       if (not Is_Nested) or else Is_Uninst then
          Start_Subprogram_Body (Info.Package_Elab_Spec_Subprg);
          Push_Local_Factory;
@@ -1232,12 +1236,7 @@ package body Trans.Chap2 is
       Final  : Boolean;
    begin
       --  Macro-expanded packages are skipped.
-      pragma Assert
-        (not (Is_Spec_Decl and then Get_Macro_Expanded_Flag (Spec)));
-
-      --  No elaboration code generated, except for nested packages
-      --  (could be within a subprogram).
-      pragma Assert (Flag_Elaboration or else Is_Nested_Package (Spec));
+      pragma Assert (not (Is_Spec_Decl and then Get_Macro_Expand_Flag (Spec)));
 
       if Is_Uninst then
          --  Make spec reachable.
@@ -1287,7 +1286,7 @@ package body Trans.Chap2 is
 
    procedure Elab_Package_Unit_Without_Body (Spec : Iir) is
    begin
-      if Get_Macro_Expanded_Flag (Spec) then
+      if Get_Macro_Expand_Flag (Spec) then
          return;
       end if;
 
@@ -1415,6 +1414,15 @@ package body Trans.Chap2 is
                Object_Static => Src.Object_Static,
                Object_Var => Instantiate_Var (Src.Object_Var),
                Object_Rti => Src.Object_Rti);
+         when Kind_Alias =>
+            Dest.all :=
+              (Kind => Kind_Alias,
+               Mark => False,
+               Alias_Var => (Mode_Value =>
+                               Instantiate_Var (Src.Alias_Var (Mode_Value)),
+                             Mode_Signal =>
+                               Instantiate_Var (Src.Alias_Var (Mode_Signal))),
+               Alias_Kind => Src.Alias_Kind);
          when Kind_Signal =>
             pragma Assert (Src.Signal_Driver = Null_Var);
             pragma Assert (Src.Signal_Function = O_Dnode_Null);
@@ -1739,7 +1747,7 @@ package body Trans.Chap2 is
 
          case Get_Kind (Inter) is
             when Iir_Kind_Interface_Constant_Declaration =>
-               null;
+               Instantiate_Iir_Info (Get_Subtype_Indication (Inter));
 
             when Iir_Kind_Interface_Package_Declaration =>
                Instantiate_Iir_Generic_Chain_Info (Get_Generic_Chain (Inter));
@@ -1779,6 +1787,12 @@ package body Trans.Chap2 is
       Pop_Instantiate_Var_Scope
         (Info.Package_Instance_Spec_Scope'Access);
    end Instantiate_Info_Package;
+
+   procedure Instantiate_Info_Entity (Inst : Iir) is
+   begin
+      Instantiate_Iir_Generic_Chain_Info (Get_Generic_Chain (Inst));
+      Instantiate_Iir_Chain_Info (Get_Port_Chain (Inst));
+   end Instantiate_Info_Entity;
 
    procedure Update_Info_Package (Inst : Iir)
    is
@@ -1856,6 +1870,7 @@ package body Trans.Chap2 is
          Translate_Package_Body_Internal (Get_Instance_Package_Body (Inst));
       elsif not Get_Need_Body (Get_Uninstantiated_Package_Decl (Inst))
         and then not Is_Nested_Package (Inst)
+        and then Flag_Elaboration
         and then Global_Storage /= O_Storage_External
       then
          --  As an elaboration subprogram for the body is always
@@ -1871,7 +1886,7 @@ package body Trans.Chap2 is
    begin
       Push_Identifier_Prefix (Mark, Get_Identifier (Inst));
 
-      if Get_Macro_Expanded_Flag (Spec) then
+      if Get_Macro_Expand_Flag (Spec) then
          Translate_Package_Concrete_Common (Inst, Inst);
          Translate_Package_Instantiation_Declaration_Macro (Inst);
       else
@@ -1884,7 +1899,7 @@ package body Trans.Chap2 is
    procedure Translate_Package_Instantiation_Declaration_Subprograms
      (Inst : Iir; What : Subprg_Translate_Kind) is
    begin
-      if Get_Macro_Expanded_Flag (Get_Uninstantiated_Package_Decl (Inst)) then
+      if Get_Macro_Expand_Flag (Get_Uninstantiated_Package_Decl (Inst)) then
          declare
             Bod : constant Iir := Get_Instance_Package_Body (Inst);
             Mark  : Id_Mark_Type;
@@ -1915,7 +1930,7 @@ package body Trans.Chap2 is
       Interface_List : O_Inter_List;
       Info           : Ortho_Info_Acc;
    begin
-      if Get_Macro_Expanded_Flag (Spec) then
+      if Get_Macro_Expand_Flag (Spec) then
          Translate_Package_Concrete_Common (Inst, Inst);
          Translate_Package_Concrete_Unit (Inst, Inst);
          Translate_Package_Instantiation_Declaration_Macro (Inst);
@@ -1963,7 +1978,7 @@ package body Trans.Chap2 is
       Constr         : O_Assoc_List;
    begin
       --  Macro-expanded instances are handled like a regular package.
-      if Get_Macro_Expanded_Flag (Spec) then
+      if Get_Macro_Expand_Flag (Spec) then
          declare
             Bod : constant Iir := Get_Package_Body (Spec);
          begin
@@ -2022,12 +2037,16 @@ package body Trans.Chap2 is
       If_Blk : O_If_Block;
       Constr : O_Assoc_List;
    begin
+      if not Flag_Elaboration and then not Is_Nested_Package (Pkg) then
+         return;
+      end if;
+
       --  Call the package elaborator only if not already elaborated.
       Info := Get_Info (Pkg);
       Start_If_Stmt
         (If_Blk,
          New_Monadic_Op (ON_Not,
-           New_Value (Get_Var (Info.Package_Elab_Var))));
+                         New_Value (Get_Var (Info.Package_Elab_Var))));
       -- Elaborates only non-elaborated packages.
       Start_Association (Constr, Info.Package_Elab_Body_Subprg);
       New_Procedure_Call (Constr);
@@ -2052,7 +2071,7 @@ package body Trans.Chap2 is
 
    procedure Elab_Dependence_Package_Instantiation (Pkg : Iir) is
    begin
-      if Get_Macro_Expanded_Flag (Get_Uninstantiated_Package_Decl (Pkg)) then
+      if Get_Macro_Expand_Flag (Get_Uninstantiated_Package_Decl (Pkg)) then
          --  Handled as a normal package
          Elab_Dependence_Package (Pkg);
       else

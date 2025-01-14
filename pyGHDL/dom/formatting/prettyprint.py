@@ -35,7 +35,7 @@ from typing import List, Union
 from pyTooling.Decorators import export
 
 from pyVHDLModel.Base import NamedEntityMixin
-from pyVHDLModel.Interface import GenericInterfaceItem, PortInterfaceItem
+from pyVHDLModel.Interface import GenericInterfaceItemMixin, PortInterfaceItemMixin
 from pyVHDLModel.Subprogram import Function
 from pyVHDLModel.Object import BaseConstant, WithDefaultExpressionMixin
 from pyVHDLModel.Type import BaseType, FullType
@@ -103,7 +103,7 @@ class PrettyPrintException(GHDLBaseException):
 class PrettyPrint:
     # _buffer: StringBuffer
     #
-    # def __init__(self):
+    # def __init__(self) -> None:
     #     self._buffer = []
 
     def CleanupDocumentationBlocks(self, documentationContent: str, level: int = 0):
@@ -144,7 +144,9 @@ class PrettyPrint:
                 buffer.append(f"{prefix}  - {package.Identifier} instantiate from {package.PackageReference}")
         buffer.append(f"{prefix}Entities ({len(library.Entities)}):")
         for entity in library.Entities.values():
-            buffer.append(f"{prefix}  - {entity.Identifier}({', '.join([a.Identifier for a in entity.Architectures])})")
+            buffer.append(
+                f"{prefix}  - {entity.Identifier}({', '.join([a.Identifier for a in entity.Architectures.values()])})"
+            )
         buffer.append(f"{prefix}Configurations ({len(library.Configurations)}):")
         for configuration in library.Configurations.values():
             buffer.append(f"{prefix}  - {configuration.Identifier}")
@@ -213,7 +215,7 @@ class PrettyPrint:
         for item in entity.Statements:
             buffer.append(f"{prefix}    ...")
         buffer.append(f"{prefix}  Architectures:")
-        for item in entity.Architectures:
+        for item in entity.Architectures.values():
             buffer.append(f"{prefix}  - {item.Identifier}")
 
         return buffer
@@ -228,7 +230,7 @@ class PrettyPrint:
             f"{prefix}  Position: {architecture.Position.Line}:{architecture.Position.Column}\n"
             f"{prefix}  Documentation: {documentationFirstLine}"
         )
-        buffer.append(f"{prefix}  Entity: {architecture.Entity.Identifier}")
+        buffer.append(f"{prefix}  Entity: {architecture.Entity.Name.Identifier}")
         buffer.append(f"{prefix}  Declared:")
         for item in architecture.DeclaredItems:
             for line in self.formatDeclaredItems(item, level + 2):
@@ -317,7 +319,9 @@ class PrettyPrint:
 
         return buffer
 
-    def formatGeneric(self, generic: Union[NamedEntityMixin, GenericInterfaceItem], level: int = 0) -> StringBuffer:
+    def formatGeneric(
+        self, generic: Union[NamedEntityMixin, GenericInterfaceItemMixin], level: int = 0
+    ) -> StringBuffer:
         if isinstance(generic, GenericConstantInterfaceItem):
             return self.formatGenericConstant(generic, level)
         elif isinstance(generic, GenericTypeInterfaceItem):
@@ -327,7 +331,7 @@ class PrettyPrint:
                 f"Unhandled generic kind '{generic.__class__.__name__}' for generic '{generic.Identifiers[0]}'."
             )
 
-    def formatPort(self, port: Union[NamedEntityMixin, PortInterfaceItem], level: int = 0) -> StringBuffer:
+    def formatPort(self, port: Union[NamedEntityMixin, PortInterfaceItemMixin], level: int = 0) -> StringBuffer:
         if isinstance(port, PortSignalInterfaceItem):
             return self.formatPortSignal(port, level)
         else:
@@ -442,13 +446,14 @@ class PrettyPrint:
 
     def formatSubtypeIndication(self, subtypeIndication, entity: str, name: str) -> str:
         if isinstance(subtypeIndication, SimpleSubtypeSymbol):
-            return f"{subtypeIndication.SymbolName}"
+            return f"{subtypeIndication.Name.Identifier}"
         elif isinstance(subtypeIndication, ConstrainedCompositeSubtypeSymbol):
             constraints = []
-            for constraint in subtypeIndication.Constraints:
-                constraints.append(str(constraint))
+            # FIXME: disabled due to problems with symbols
+            # for constraint in subtypeIndication.Constraints:
+            #     constraints.append(str(constraint))
 
-            return f"{subtypeIndication.SymbolName}({', '.join(constraints)})"
+            return f"{subtypeIndication.Name.Identifier}({', '.join(constraints)})"
         else:
             raise PrettyPrintException(
                 f"Unhandled subtype kind '{subtypeIndication.__class__.__name__}' for {entity} '{name}'."

@@ -16,7 +16,6 @@
 
 with Ada.Unchecked_Deallocation;
 with Ada.Characters.Handling;
-with Interfaces;
 
 with Name_Table; use Name_Table;
 with Str_Table;
@@ -850,7 +849,6 @@ package body Vhdl.Evaluation is
             when others =>
                Error_Kind ("convert_node_to_typ", N);
          end case;
-         return null;
       end Convert_Node_To_Typ;
 
       function Convert_Node_To_Memtyp (N : Iir; Typ : Type_Acc) return Memtyp
@@ -1085,7 +1083,7 @@ package body Vhdl.Evaluation is
       Res_Mt := Eval_Static_Predefined_Function_Call
         (null, Left_Mt, Right_Mt, Res_Typ, Orig);
 
-      Res := Convert_Memtyp_To_Node (Res_Mt, Res_Type, Orig);
+      Res := Convert_Memtyp_To_Node (Res_Mt, Get_Base_Type (Res_Type), Orig);
       Release_Expr_Pool (Marker);
 
       return Res;
@@ -1124,14 +1122,59 @@ package body Vhdl.Evaluation is
       return Res;
    end Eval_Predefined_Call;
 
+   procedure Eval_Int_Negation
+     (Val : Int64; Res : out Int64; Ovf : out Boolean; Orig : Iir)
+   is
+      Sz : Scalar_Size;
+   begin
+      if Val = Int64'First then
+         Res := Int64'Last;
+         Ovf := True;
+         return;
+      end if;
+
+      Res := -Val;
+      Sz := Get_Scalar_Size (Get_Base_Type (Get_Type (Orig)));
+      case Sz is
+         when Scalar_64 =>
+            Ovf := False;
+         when Scalar_32 =>
+            Ovf := Res >= 16#8000_0000#;
+         when Scalar_16 =>
+            Ovf := Res >= 16#8000#;
+         when Scalar_8 =>
+            Ovf := Res >= 16#80#;
+      end case;
+   end Eval_Int_Negation;
+
+   procedure Eval_Int_Absolute
+     (Val : Int64; Res : out Int64; Ovf : out Boolean; Orig : Iir) is
+   begin
+      if Val >= 0 then
+         Res := Val;
+         Ovf := False;
+      else
+         Eval_Int_Negation (Val, Res, Ovf, Orig);
+      end if;
+   end Eval_Int_Absolute;
+
+   function Build_Report_Overflow (Orig : Iir) return Iir is
+   begin
+      Warning_Msg_Sem (Warnid_Runtime_Error, +Orig,
+                       "arithmetic overflow in static expression");
+      return Build_Overflow (Orig);
+   end Build_Report_Overflow;
+
    function Eval_Monadic_Operator (Orig : Iir; Operand : Iir) return Iir
    is
-      pragma Unsuppress (Overflow_Check);
       subtype Iir_Predefined_Vector_Minmax is Iir_Predefined_Functions range
         Iir_Predefined_Vector_Minimum .. Iir_Predefined_Vector_Maximum;
 
       Imp : constant Iir := Get_Implementation (Orig);
       Func : Iir_Predefined_Functions;
+
+      Res : Int64;
+      Ovf : Boolean;
    begin
       if Is_Overflow_Literal (Operand) then
          --  Propagate overflow.
@@ -1141,11 +1184,21 @@ package body Vhdl.Evaluation is
       Func := Get_Implicit_Definition (Imp);
       case Func is
          when Iir_Predefined_Integer_Negation =>
-            return Build_Integer (-Get_Value (Operand), Orig);
+            Eval_Int_Negation (Get_Value (Operand), Res, Ovf, Orig);
+            if Ovf then
+               return Build_Report_Overflow (Orig);
+            else
+               return Build_Integer (Res, Orig);
+            end if;
          when Iir_Predefined_Integer_Identity =>
             return Build_Integer (Get_Value (Operand), Orig);
          when Iir_Predefined_Integer_Absolute =>
-            return Build_Integer (abs Get_Value (Operand), Orig);
+            Eval_Int_Absolute (Get_Value (Operand), Res, Ovf, Orig);
+            if Ovf then
+               return Build_Report_Overflow (Orig);
+            else
+               return Build_Integer (Res, Orig);
+            end if;
 
          when Iir_Predefined_Floating_Negation =>
             return Build_Floating (-Get_Fp_Value (Operand), Orig);
@@ -1155,11 +1208,21 @@ package body Vhdl.Evaluation is
             return Build_Floating (abs Get_Fp_Value (Operand), Orig);
 
          when Iir_Predefined_Physical_Negation =>
-            return Build_Physical (-Get_Physical_Value (Operand), Orig);
+            Eval_Int_Negation (Get_Physical_Value (Operand), Res, Ovf, Orig);
+            if Ovf then
+               return Build_Report_Overflow (Orig);
+            else
+               return Build_Physical (Res, Orig);
+            end if;
          when Iir_Predefined_Physical_Identity =>
             return Build_Physical (Get_Physical_Value (Operand), Orig);
          when Iir_Predefined_Physical_Absolute =>
-            return Build_Physical (abs Get_Physical_Value (Operand), Orig);
+            Eval_Int_Absolute (Get_Physical_Value (Operand), Res, Ovf, Orig);
+            if Ovf then
+               return Build_Report_Overflow (Orig);
+            else
+               return Build_Physical (Res, Orig);
+            end if;
 
          when Iir_Predefined_Boolean_Not
            | Iir_Predefined_Bit_Not =>
@@ -1291,12 +1354,6 @@ package body Vhdl.Evaluation is
             Error_Internal (Orig, "eval_monadic_operator: " &
                             Iir_Predefined_Functions'Image (Func));
       end case;
-   exception
-      when Constraint_Error =>
-         --  Can happen for absolute.
-         Warning_Msg_Sem (Warnid_Runtime_Error, +Orig,
-                          "arithmetic overflow in static expression");
-         return Build_Overflow (Orig);
    end Eval_Monadic_Operator;
 
    function Eval_Dyadic_Bit_Array_Operator
@@ -2736,6 +2793,7 @@ package body Vhdl.Evaluation is
       Prefix : Iir;
       Prefix_Type : Iir;
       Dim : Natural;
+      Indexes : Iir_Flist;
    begin
       Prefix := Get_Prefix (Attr);
       case Get_Kind (Prefix) is
@@ -2764,7 +2822,8 @@ package body Vhdl.Evaluation is
       end if;
 
       Dim := Eval_Attribute_Parameter_Or_1 (Attr);
-      return Get_Nth_Element (Get_Index_Subtype_List (Prefix_Type), Dim - 1);
+      Indexes := Get_Index_Subtype_List (Prefix_Type);
+      return Get_Nth_Element (Indexes, Dim - 1);
    end Eval_Array_Attribute;
 
    function Eval_Integer_Image (Val : Int64; Orig : Iir) return Iir
@@ -2799,7 +2858,7 @@ package body Vhdl.Evaluation is
    begin
       P := Str'First;
 
-      Grt.Fcvt.Format_Image (Str, P, Interfaces.IEEE_Float_64 (Val));
+      Grt.Fcvt.Format_Image (Str, P, Grt.Types.Ghdl_F64 (Val));
 
       Res := Build_String (Str (1 .. P), Orig);
       --  FIXME: this is not correct since the type is *not* constrained.
@@ -3226,7 +3285,7 @@ package body Vhdl.Evaluation is
                      return Build_Discrete (Int64 (Res.Val), Orig);
                   else
                      Warning_Msg_Sem
-                       (Warnid_Runtime_Error, +Get_Parameter (Orig),
+                       (Warnid_Runtime_Error, +Orig,
                         "incorrect parameter for value attribute");
                      return Build_Overflow (Orig);
                   end if;
@@ -3437,6 +3496,7 @@ package body Vhdl.Evaluation is
       Prefix := Get_Prefix (Expr);
       Prefix := Eval_Static_Expr (Prefix);
 
+      --  Eval indexes
       declare
          Prefix_Type : constant Iir := Get_Type (Prefix);
          Indexes_Type : constant Iir_Flist :=
@@ -3473,6 +3533,43 @@ package body Vhdl.Evaluation is
             Error_Kind ("eval_indexed_name", Prefix);
       end case;
    end Eval_Indexed_Name;
+
+   function Eval_Slice_Name (Expr : Iir) return Iir
+   is
+      Suffix : constant Iir := Get_Suffix (Expr);
+      Len : constant Int64 := Eval_Discrete_Range_Length (Suffix);
+      Rng : constant Iir := Eval_Static_Range (Suffix);
+      Prefix : Iir;
+      Dir : Direction_Type;
+      Left, Right : Iir;
+      Pos : Iir_Index32;
+   begin
+      if Len = 0 then
+         return Build_String (Null_String8, 0, Expr);
+      end if;
+
+      Prefix := Get_Prefix (Expr);
+      Prefix := Eval_Static_Expr (Prefix);
+
+      Eval_Range_Bounds (Suffix, Dir, Left, Right);
+
+      Pos := Eval_Pos_In_Range (Rng, Left);
+
+      case Get_Kind (Prefix) is
+         when Iir_Kind_String_Literal8 =>
+            declare
+               use Str_Table;
+               Str_Id : constant String8_Id := Get_String8_Id (Prefix);
+            begin
+               return Build_String (String8_Substring (Str_Id, Int32 (Pos)),
+                 Nat32 (Len), Expr);
+            end;
+         when Iir_Kind_Overflow_Literal =>
+            return Build_Overflow (Expr, Get_Type (Expr));
+         when others =>
+            Error_Kind ("eval_slice_name", Prefix);
+      end case;
+   end Eval_Slice_Name;
 
    function Eval_Indexed_Aggregate_By_Offset
      (Aggr : Iir; Off : Iir_Index32; Dim : Natural := 0) return Iir
@@ -3656,6 +3753,8 @@ package body Vhdl.Evaluation is
             return Eval_Selected_Element (Expr);
          when Iir_Kind_Indexed_Name =>
             return Eval_Indexed_Name (Expr);
+         when Iir_Kind_Slice_Name =>
+            return Eval_Slice_Name (Expr);
 
          when Iir_Kind_Parenthesis_Expression =>
             return Eval_Static_Expr_Orig (Get_Expression (Expr), Orig);
@@ -4311,7 +4410,6 @@ package body Vhdl.Evaluation is
          when others =>
             Error_Kind ("eval_int_in_range", Bound);
       end case;
-      return True;
    end Eval_Int_In_Range;
 
    function Eval_Phys_In_Range (Val : Int64; Bound : Iir) return Boolean
@@ -4336,7 +4434,6 @@ package body Vhdl.Evaluation is
          when others =>
             Error_Kind ("eval_phys_in_range", Bound);
       end case;
-      return True;
    end Eval_Phys_In_Range;
 
    function Eval_Fp_In_Range (Val : Fp64; Bound : Iir) return Boolean
@@ -4351,7 +4448,6 @@ package body Vhdl.Evaluation is
          when others =>
             Error_Kind ("eval_fp_in_range", Bound);
       end case;
-      return True;
    end Eval_Fp_In_Range;
 
    function Eval_In_Range (Val : Iir; Dir : Direction_Type; L, R : Iir)
@@ -5287,7 +5383,8 @@ package body Vhdl.Evaluation is
                                  Is_Instance);
             when Iir_Kind_For_Generate_Statement =>
                Path_Instance := El;
-            when Iir_Kind_If_Generate_Statement =>
+            when Iir_Kind_If_Generate_Statement
+              | Iir_Kind_Component_Instantiation_Statement =>
                Path_Add_Element (Get_Parent (El), Is_Instance);
                Path_Add_Name (El);
                Path_Add (":");

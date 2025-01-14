@@ -62,7 +62,9 @@ package body Vhdl.Sem is
    end Add_Dependence;
 
    --  LRM 1.1  Entity declaration.
-   procedure Sem_Entity_Declaration (Entity : Iir_Entity_Declaration) is
+   procedure Sem_Entity_Declaration (Entity : Iir_Entity_Declaration)
+   is
+      Generics : constant Iir := Get_Generic_Chain (Entity);
    begin
       Xrefs.Xref_Decl (Entity);
       Sem_Scopes.Add_Name (Entity);
@@ -76,7 +78,12 @@ package body Vhdl.Sem is
       Open_Declarative_Region;
 
       -- Sem generics.
-      Sem_Interface_Chain (Get_Generic_Chain (Entity), Generic_Interface_List);
+      Sem_Interface_Chain (Generics, Generic_Interface_List);
+
+      --  Set macro-expand flag.
+      if Component_Need_Instance (Entity, False) then
+         Set_Macro_Expand_Flag (Entity, True);
+      end if;
 
       -- Sem ports.
       Sem_Interface_Chain (Get_Port_Chain (Entity), Port_Interface_List);
@@ -305,6 +312,10 @@ package body Vhdl.Sem is
       Formal_Base := Get_Object_Prefix (Formal);
       Actual_Base := Get_Object_Prefix (Actual);
 
+      if Get_Kind (Formal_Base) = Iir_Kind_Interface_View_Declaration then
+         return True;
+      end if;
+
       --  If the formal is of mode IN, then it has no driving value, and its
       --  effective value is the effective value of the actual.
       --  Always collapse in this case.
@@ -372,7 +383,7 @@ package body Vhdl.Sem is
    end Can_Collapse_Signals;
 
    --  INTER_PARENT contains generics interfaces;
-   --  ASSOC_PARENT constains generic aspects.
+   --  ASSOC_PARENT contains generic aspects.
    function Sem_Generic_Association_Chain
      (Inter_Parent : Iir; Assoc_Parent : Iir) return Boolean
    is
@@ -671,7 +682,8 @@ package body Vhdl.Sem is
          Formal_Base := Get_Interface_Of_Formal (Formal);
 
          case Get_Kind (Formal_Base) is
-            when Iir_Kind_Interface_Signal_Declaration =>
+            when Iir_Kind_Interface_Signal_Declaration
+               | Iir_Kind_Interface_View_Declaration =>
                if Get_Kind (Assoc) = Iir_Kind_Association_Element_By_Expression
                then
                   N_Assoc := Sem_Signal_Port_Association
@@ -827,7 +839,7 @@ package body Vhdl.Sem is
                   --  has an alternative label, then it is an error if the
                   --  generate statement label does not contain a generate
                   --  specification that is an alternative label.
-                  if Get_Has_Label (Res) then
+                  if Has_User_Label (Res) then
                      Error_Msg_Sem
                        (+Block_Spec,
                         "alternative label required in block specification");
@@ -1959,6 +1971,8 @@ package body Vhdl.Sem is
                         "result subtype of a pure function cannot denote an"
                           & " access type");
                   end if;
+               when Iir_Kind_Error =>
+                  null;
                when others =>
                   if  Vhdl_Std >= Vhdl_08
                     and then not Get_Signal_Type_Flag (Return_Type)
@@ -2110,6 +2124,70 @@ package body Vhdl.Sem is
       Add_Element (List, El);
    end Add_Analysis_Checks_List;
 
+   procedure Clear_Suspend_Flag (N : Iir);
+
+   procedure Clear_Suspend_Flag_Chain (N : Iir)
+   is
+      El : Iir;
+   begin
+      El := N;
+      while El /= Null_Iir loop
+         Clear_Suspend_Flag (El);
+         El := Get_Chain (El);
+      end loop;
+   end Clear_Suspend_Flag_Chain;
+
+   procedure Clear_Suspend_Flag (N : Iir) is
+   begin
+      case Iir_Kinds_Sequential_Statement (Get_Kind (N)) is
+         when Iir_Kind_Procedure_Call_Statement =>
+            Set_Suspend_Flag (N, False);
+         when Iir_Kind_For_Loop_Statement
+           | Iir_Kind_While_Loop_Statement =>
+            Set_Suspend_Flag (N, False);
+            Clear_Suspend_Flag_Chain (Get_Sequential_Statement_Chain (N));
+         when Iir_Kind_Case_Statement =>
+            declare
+               Ch : Iir;
+               Stmts : Iir;
+            begin
+               Set_Suspend_Flag (N, False);
+               Ch := Get_Case_Statement_Alternative_Chain (N);
+               while Ch /= Null_Iir loop
+                  Stmts := Get_Associated_Chain (Ch);
+                  if Stmts /= Null_Iir then
+                     Clear_Suspend_Flag_Chain (Stmts);
+                  end if;
+                  Ch := Get_Chain (Ch);
+               end loop;
+            end;
+         when Iir_Kind_If_Statement =>
+            Set_Suspend_Flag (N, False);
+            Clear_Suspend_Flag_Chain (Get_Sequential_Statement_Chain (N));
+            declare
+               Els : Iir;
+            begin
+               Els := Get_Else_Clause (N);
+               while Els /= Null_Iir loop
+                  Clear_Suspend_Flag_Chain
+                    (Get_Sequential_Statement_Chain (Els));
+                  Els := Get_Else_Clause (Els);
+               end loop;
+            end;
+         when Iir_Kinds_Signal_Assignment_Statement
+           | Iir_Kinds_Variable_Assignment_Statement
+           | Iir_Kind_Null_Statement
+           | Iir_Kind_Assertion_Statement
+           | Iir_Kind_Report_Statement
+           | Iir_Kinds_Next_Exit_Statement
+           | Iir_Kind_Return_Statement
+           | Iir_Kind_Break_Statement =>
+            null;
+         when Iir_Kind_Wait_Statement =>
+            raise Internal_Error;
+      end case;
+   end Clear_Suspend_Flag;
+
    procedure Sem_Subprogram_Body (Subprg : Iir)
    is
       Spec : constant Iir := Get_Subprogram_Specification (Subprg);
@@ -2233,6 +2311,21 @@ package body Vhdl.Sem is
                      Next (Callees_It);
                   end loop;
                end;
+            end if;
+
+            --  There is no wait in this procedure (either directly or
+            --  indirectly).  So can clear the suspend flag.
+            if Get_Suspend_Flag (Subprg)
+              and then Get_Wait_State (Spec) = False
+            then
+               --  Clear spec only if it has never been used.
+               if Get_Chain (Spec) = Subprg then
+                  Set_Suspend_Flag (Spec, False);
+               end if;
+               --  Clear recursively.
+               Set_Suspend_Flag (Subprg, False);
+               Clear_Suspend_Flag_Chain
+                 (Get_Sequential_Statement_Chain (Subprg));
             end if;
 
             --  Do not add to Analysis_Checks_List as procedures can't
@@ -2817,6 +2910,8 @@ package body Vhdl.Sem is
                null;
             when Iir_Kind_Terminal_Declaration =>
                null;
+            when Iir_Kind_Mode_View_Declaration =>
+               null;
             when others =>
                pragma Assert (Flags.Flag_Force_Analysis);
                null;
@@ -2877,7 +2972,7 @@ package body Vhdl.Sem is
                begin
                   --  Could be an error.
                   if Get_Kind (Pkg) = Iir_Kind_Package_Declaration
-                    and then Get_Macro_Expanded_Flag (Pkg)
+                    and then Get_Macro_Expand_Flag (Pkg)
                   then
                      return True;
                   end if;
@@ -2889,43 +2984,6 @@ package body Vhdl.Sem is
       end loop;
       return False;
    end Is_Package_Macro_Expanded;
-
-   --  Mark declarations of HDR elaboration status to FLAG.
-   --  Set to true at then end of a package declaration, but reset at the
-   --  beginning of body analysis.
-   procedure Mark_Declarations_Elaborated (Hdr : Iir; Flag : Boolean)
-   is
-      Decl : Iir;
-   begin
-      Decl := Get_Declaration_Chain (Hdr);
-      while Decl /= Null_Iir loop
-         case Get_Kind (Decl) is
-            when Iir_Kinds_Subprogram_Declaration =>
-               --  The flag can always be set, but not cleared on implicit
-               --  subprograms.
-               if Flag
-                 or else
-                 Get_Implicit_Definition (Decl) not in Iir_Predefined_Implicit
-               then
-                  Set_Elaborated_Flag (Decl, Flag);
-               end if;
-            when Iir_Kind_Type_Declaration =>
-               declare
-                  Def : constant Iir := Get_Type_Definition (Decl);
-               begin
-                  if Get_Kind (Def) = Iir_Kind_Protected_Type_Declaration then
-                     --  Mark the protected type as elaborated.
-                     --  Mark the methods as elaborated.
-                     Set_Elaborated_Flag (Def, Flag);
-                     Mark_Declarations_Elaborated (Def, Flag);
-                  end if;
-               end;
-            when others =>
-               null;
-         end case;
-         Decl := Get_Chain (Decl);
-      end loop;
-   end Mark_Declarations_Elaborated;
 
    --  LRM 2.5  Package Declarations.
    procedure Sem_Package_Declaration (Pkg : Iir_Package_Declaration)
@@ -2968,7 +3026,7 @@ package body Vhdl.Sem is
 
             if Generic_Map /= Null_Iir then
                --  Generic-mapped packages are not macro-expanded.
-               Set_Macro_Expanded_Flag (Pkg, False);
+               Set_Macro_Expand_Flag (Pkg, False);
 
                if Sem_Generic_Association_Chain (Header, Header) then
                   --  For generic-mapped packages, use the actual type for
@@ -2991,13 +3049,13 @@ package body Vhdl.Sem is
                end if;
             else
                --  Uninstantiated package.  Maybe macro expanded.
-               Set_Macro_Expanded_Flag
+               Set_Macro_Expand_Flag
                  (Pkg, Is_Package_Macro_Expanded (Pkg));
             end if;
          end;
       else
          --  Simple packages are never expanded.
-         Set_Macro_Expanded_Flag (Pkg, False);
+         Set_Macro_Expand_Flag (Pkg, False);
       end if;
 
       Sem_Declaration_Chain (Pkg);
@@ -3020,10 +3078,12 @@ package body Vhdl.Sem is
    procedure Sem_Package_Body (Decl : Iir)
    is
       Package_Ident : constant Name_Id := Get_Identifier (Decl);
+      Is_Top_Level : constant Boolean := not Is_Nested_Package (Decl);
       Package_Decl : Iir;
+      Implicit : Implicit_Declaration_Type;
    begin
       -- First, find the package declaration.
-      if not Is_Nested_Package (Decl) then
+      if Is_Top_Level then
          declare
             Design_Unit: Iir_Design_Unit;
          begin
@@ -3096,11 +3156,23 @@ package body Vhdl.Sem is
       --     body (if any).
       Open_Declarative_Region;
 
+      if Is_Top_Level then
+         Push_Signals_Declarative_Part (Implicit, Decl);
+      end if;
+
       Sem_Scopes.Add_Package_Declarations (Package_Decl);
 
       Sem_Declaration_Chain (Decl);
+
+      --  Check presence of bodies for declarations in the package body.
       Check_Full_Declaration (Decl, Decl);
+
+      --  Check presence of bodies for declarations in the package declaration.
       Check_Full_Declaration (Package_Decl, Decl);
+
+      if Is_Top_Level then
+         Pop_Signals_Declarative_Part (Implicit);
+      end if;
 
       Close_Declarative_Region;
       Set_Is_Within_Flag (Package_Decl, False);
@@ -3141,6 +3213,7 @@ package body Vhdl.Sem is
       Hdr : Iir;
       Pkg : Iir;
       Bod : Iir_Design_Unit;
+      Parent : Iir;
    begin
       Sem_Scopes.Add_Name (Decl);
       Set_Visible_Flag (Decl, True);
@@ -3170,26 +3243,52 @@ package body Vhdl.Sem is
          return;
       end if;
 
+      --  Add dependency to the package body
       --  FIXME: unless the parent is a package declaration library unit, the
       --  design unit depends on the body.
-      if Get_Need_Body (Pkg) and then not Is_Nested_Package (Pkg) then
-         Bod := Get_Package_Body (Pkg);
+      if not Is_Nested_Package (Pkg) then
+         --  Find the body
+         Bod := Libraries.Find_Secondary_Unit
+           (Get_Design_Unit (Pkg), Null_Identifier);
          if Is_Null (Bod) then
+            --  It's an error if the body is required
+            if Get_Need_Body (Pkg) then
+               Error_Msg_Sem (+Decl, "cannot find package body of %n", +Pkg);
+            end if;
+         else
+            --  As there is a body, the unit depends on it.
+            --  Force the need body flag, so that the body will be expanded
+            --  if needed
+            Set_Need_Body (Pkg, True);
+            --  TODO: load only if the package is macro expanded
             Bod := Load_Secondary_Unit
               (Get_Design_Unit (Pkg), Null_Identifier, Decl);
-         else
-            Bod := Get_Design_Unit (Bod);
+            if Bod /= Null_Iir then
+               Add_Dependence (Bod);
+            end if;
          end if;
-         if Is_Null (Bod) then
-            Error_Msg_Sem (+Decl, "cannot find package body of %n", +Pkg);
-         else
-            Add_Dependence (Bod);
-         end if;
+      else
+         Bod := Null_Iir;
       end if;
 
       --  Instantiate the declaration after analyse of the body.  So that
       --  the use_flag on the declaration can be propagated to the instance.
       Sem_Inst.Instantiate_Package_Declaration (Decl, Pkg);
+
+      --  LRM08 4.9 Package instantiation declarations
+      --  If the package instantiation declaration occurs immediately within
+      --  an encloding package declaration [...], the generic-mapped package
+      --  body occurs at the end of the package body corresponding to the
+      --  enclosing package declaration.
+      Parent := Get_Parent (Decl);
+      if Get_Kind (Parent) = Iir_Kind_Package_Declaration then
+         Set_Immediate_Body_Flag (Decl, False);
+         Mark_Declarations_Elaborated (Decl, False);
+      else
+         if Get_Need_Body (Pkg) or else Bod /= Null_Iir then
+            Set_Immediate_Body_Flag (Decl, True);
+         end if;
+      end if;
    end Sem_Package_Instantiation_Declaration;
 
    --  LRM 10.4  Use Clauses.

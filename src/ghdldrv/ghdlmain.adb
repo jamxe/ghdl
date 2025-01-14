@@ -14,12 +14,12 @@
 --  You should have received a copy of the GNU General Public License
 --  along with this program.  If not, see <gnu.org/licenses>.
 with Ada.Command_Line;
-with Ada.Command_Line.Response_File;
+with Ada.Unchecked_Deallocation;
 
 with Simple_IO;
+with Filesystem;
 with Version;
 with Bug;
-with Types; use Types;
 with Errorout; use Errorout;
 with Errorout.Console;
 with Default_Paths;
@@ -91,12 +91,14 @@ package body Ghdlmain is
       return Cmd.Help_Str.all;
    end Get_Short_Help;
 
-   procedure Perform_Action
-     (Cmd : in out Command_Str_Disp; Args : Argument_List)
+   procedure Perform_Action (Cmd : in out Command_Str_Disp;
+                             Args : String_Acc_Array;
+                             Success : out Boolean)
    is
       pragma Unreferenced (Args);
    begin
       Simple_IO.Put_Line (Cmd.Disp.all);
+      Success := True;
    end Perform_Action;
 
 
@@ -109,7 +111,9 @@ package body Ghdlmain is
                             Res : out Option_State);
 
    function Get_Short_Help (Cmd : Command_Help) return String;
-   procedure Perform_Action (Cmd : in out Command_Help; Args : Argument_List);
+   procedure Perform_Action (Cmd : in out Command_Help;
+                             Args : String_Acc_Array;
+                             Success : out Boolean);
 
    function Decode_Command (Cmd : Command_Help; Name : String) return Boolean
    is
@@ -142,7 +146,9 @@ package body Ghdlmain is
         & ASCII.LF & "  aliases: -h, --help";
    end Get_Short_Help;
 
-   procedure Perform_Action (Cmd : in out Command_Help; Args : Argument_List)
+   procedure Perform_Action (Cmd : in out Command_Help;
+                             Args : String_Acc_Array;
+                             Success : out Boolean)
    is
       pragma Unreferenced (Cmd);
 
@@ -150,6 +156,9 @@ package body Ghdlmain is
       use Ada.Command_Line;
       C : Command_Acc;
    begin
+      --  Default
+      Success := False;
+
       if Args'Length = 0 then
          Put_Line ("usage: " & Command_Name & " COMMAND [OPTIONS] ...");
          Put_Line ("COMMAND is one of:");
@@ -175,53 +184,100 @@ package body Ghdlmain is
          C := Find_Command (Args (1).all);
          if C = null then
             Error ("Command '" & Args (1).all & "' is unknown.");
-            raise Option_Error;
+            return;
          end if;
          Put_Line (Get_Short_Help (C.all));
          Disp_Long_Help (C.all);
       else
          Error ("Command 'help' accepts at most one argument.");
-         raise Option_Error;
+         return;
       end if;
+      Success := True;
    end Perform_Action;
 
-   --  Command options help.
-   type Command_Option_Help is new Command_Type with null record;
-   function Decode_Command (Cmd : Command_Option_Help; Name : String)
+   --  Command help options.
+   type Command_Help_Option is new Command_Type with null record;
+   function Decode_Command (Cmd : Command_Help_Option; Name : String)
                            return Boolean;
-   function Get_Short_Help (Cmd : Command_Option_Help) return String;
-   procedure Perform_Action (Cmd : in out Command_Option_Help;
-                             Args : Argument_List);
+   function Get_Short_Help (Cmd : Command_Help_Option) return String;
+   procedure Perform_Action (Cmd : in out Command_Help_Option;
+                             Args : String_Acc_Array;
+                             Success : out Boolean);
 
-   function Decode_Command (Cmd : Command_Option_Help; Name : String)
+   function Decode_Command (Cmd : Command_Help_Option; Name : String)
                            return Boolean
    is
       pragma Unreferenced (Cmd);
    begin
       return
+        Name = "help-options" or else
+        Name = "--help-options" or else
         Name = "opts-help" or else
         Name = "--options-help";
    end Decode_Command;
 
-   function Get_Short_Help (Cmd : Command_Option_Help) return String
+   function Get_Short_Help (Cmd : Command_Help_Option) return String
    is
       pragma Unreferenced (Cmd);
    begin
-      return "opts-help"
+      return "help-options"
         & ASCII.LF & "  Display help for analyzer options"
-        & ASCII.LF & "  alias: --options-help";
+        & ASCII.LF & "  alias: --help-options, opts-help, --options-help";
    end Get_Short_Help;
 
-   procedure Perform_Action (Cmd : in out Command_Option_Help;
-                             Args : Argument_List)
+   procedure Perform_Action (Cmd : in out Command_Help_Option;
+                             Args : String_Acc_Array;
+                             Success : out Boolean)
+   is
+      pragma Unreferenced (Cmd);
+   begin
+      if Args'Length /= 0 then
+         Error ("warning: command 'opts-help' does not accept any argument");
+      end if;
+      Options.Disp_Help_Options;
+      Success := True;
+   end Perform_Action;
+
+   --  Command help-warnings
+   type Command_Help_Warnings is new Command_Type with null record;
+   function Decode_Command (Cmd : Command_Help_Warnings; Name : String)
+                           return Boolean;
+   function Get_Short_Help (Cmd : Command_Help_Warnings) return String;
+   procedure Perform_Action (Cmd : in out Command_Help_Warnings;
+                             Args : String_Acc_Array;
+                             Success : out Boolean);
+
+   function Decode_Command (Cmd : Command_Help_Warnings; Name : String)
+                           return Boolean
+   is
+      pragma Unreferenced (Cmd);
+   begin
+      return
+        Name = "help-warnings" or else
+        Name = "--help-warnings";
+   end Decode_Command;
+
+   function Get_Short_Help (Cmd : Command_Help_Warnings) return String
+   is
+      pragma Unreferenced (Cmd);
+   begin
+      return "help-warnings"
+        & ASCII.LF & "  Display help about all the warnings"
+        & ASCII.LF & "  alias: --help-warnings";
+   end Get_Short_Help;
+
+   procedure Perform_Action (Cmd : in out Command_Help_Warnings;
+                             Args : String_Acc_Array;
+                             Success : out Boolean)
    is
       pragma Unreferenced (Cmd);
    begin
       if Args'Length /= 0 then
          Error
-           ("warning: command 'opts-help' does not accept any argument");
+           ("warning: command 'help-warnings' does not accept any argument");
       end if;
-      Options.Disp_Options_Help;
+      Options.Disp_Help_Warnings;
+      Success := True;
    end Perform_Action;
 
    --  Command Version
@@ -230,7 +286,8 @@ package body Ghdlmain is
                            return Boolean;
    function Get_Short_Help (Cmd : Command_Version) return String;
    procedure Perform_Action (Cmd : in out Command_Version;
-                             Args : Argument_List);
+                             Args : String_Acc_Array;
+                             Success : out Boolean);
 
    function Decode_Command (Cmd : Command_Version; Name : String)
                            return Boolean
@@ -252,29 +309,38 @@ package body Ghdlmain is
         & ASCII.LF & "  aliases: -v, --version";
    end Get_Short_Help;
 
-   procedure Perform_Action (Cmd : in out Command_Version;
-                             Args : Argument_List)
+   procedure Disp_Ghdl_Version
    is
-      pragma Unreferenced (Cmd);
       use Simple_IO;
    begin
-      if Args'Length /= 0 then
-         if Args (1).all = "ref" or else Args (1).all = "--ref" then
-            Put_Line (Version.Ghdl_Ref);
-            return;
-         end if;
-         if Args (1).all = "hash" or else Args (1).all = "--hash" then
-            Put_Line (Version.Ghdl_Hash);
-            return;
-         end if;
-         Error ("warning: 'version' subcommand '"
-                & Args(1).all & "' not supported");
-         return;
-      end if;
       Put ("GHDL ");
       Put (Version.Ghdl_Ver);
       Put (' ');
       Put_Line (Version.Ghdl_Release);
+   end Disp_Ghdl_Version;
+
+   procedure Perform_Action (Cmd : in out Command_Version;
+                             Args : String_Acc_Array;
+                             Success : out Boolean)
+   is
+      pragma Unreferenced (Cmd);
+      use Simple_IO;
+   begin
+      Success := True;
+
+      if Args'Length /= 0 then
+         if Args (1).all = "ref" or else Args (1).all = "--ref" then
+            Put_Line (Version.Ghdl_Ref);
+         elsif Args (1).all = "hash" or else Args (1).all = "--hash" then
+            Put_Line (Version.Ghdl_Hash);
+         else
+            Error ("warning: 'version' subcommand '"
+                     & Args(1).all & "' not supported");
+            Success := False;
+         end if;
+         return;
+      end if;
+      Disp_Ghdl_Version;
       Put_Line (" Compiled with " & Bug.Get_Gnat_Version);
       if Version_String /= null then
          Put (" ");
@@ -284,7 +350,7 @@ package body Ghdlmain is
       Put_Line ("Written by Tristan Gingold.");
       New_Line;
       --  Display copyright.  Assume 80 cols terminal.
-      Put_Line ("Copyright (C) 2003 - 2023 Tristan Gingold.");
+      Put_Line ("Copyright (C) 2003 - 2024 Tristan Gingold.");
       Put_Line ("GHDL is free software, covered by the "
                 & "GNU General Public License.  There is NO");
       Put_Line ("warranty; not even for MERCHANTABILITY or"
@@ -330,7 +396,7 @@ package body Ghdlmain is
    end Find_Command_With_Error;
 
    procedure Decode_Command_Options (Cmd : in out Command_Type'Class;
-                                     Args : Argument_List;
+                                     Args : String_Acc_Array;
                                      First_Arg : out Natural)
    is
       Arg_Index : Natural;
@@ -343,7 +409,7 @@ package body Ghdlmain is
       Arg_Index := Args'First;
       while Arg_Index <= Args'Last loop
          declare
-            Arg : constant String_Access := Args (Arg_Index);
+            Arg : constant String_Acc := Args (Arg_Index);
             Res : Option_State;
          begin
             if Arg (1) = '-' then
@@ -424,10 +490,107 @@ package body Ghdlmain is
       end if;
    end Convert_Path_To_Unix;
 
+   type String_Acc_Arr_Acc is access String_Acc_Array;
+   procedure Free is new Ada.Unchecked_Deallocation
+     (String_Acc_Array, String_Acc_Arr_Acc);
+
+   procedure Free is new Ada.Unchecked_Deallocation
+     (String, String_Acc);
+
+   --  Resize LIST to LEN elements.
+   procedure Resize (List : in out String_Acc_Arr_Acc; Len : Natural)
+   is
+      pragma Assert (List'First = 1);
+      List_Len : constant Natural := List'Last;
+      Res : String_Acc_Arr_Acc;
+   begin
+      Res := new String_Acc_Array (1 .. Len);
+      if Len > List_Len then
+         --  Increase.
+         Res (1 .. List_Len) := List.all;
+      else
+         --  Shrink.
+         Res.all := List (1 .. Len);
+      end if;
+      Free (List);
+      List := Res;
+   end Resize;
+
+   --  Read a response file and return the list of arguments.
+   --  Return null if the file cannot be read.
+   --  Neither escape nor quotes are handled.
+   function Read_Response_File (Filename : String) return String_Acc_Arr_Acc
+   is
+      function Is_Blank (C : Character) return Boolean is
+      begin
+         return C = ' ' or C = ASCII.HT or C = ASCII.CR or C = ASCII.LF;
+      end Is_Blank;
+
+      use Filesystem;
+      Buf : String_Acc;
+      Fd : Filesystem.File_Descriptor;
+      Len : Long_Integer;
+      Res : String_Acc_Arr_Acc;
+      Narg : Natural;
+      F, P : Natural;
+   begin
+      --  Open and read content.
+      Open_Read (Fd, Filename);
+      if Is_Error (Fd) then
+         Error ("cannot open response file '" & Filename & "'");
+         return null;
+      end if;
+      Len := File_Length (Fd);
+      Buf := new String (1 .. Natural (Len));
+      Read (Fd, Buf.all'Address, Len);
+      Close (Fd);
+
+      Narg := 0;
+      Res := new String_Acc_Array (1 .. 32);
+      P := Buf'First;
+      loop
+         --  Skip spaces, newlines...
+         while P <= Buf'Last and then Is_Blank (Buf (P)) loop
+            P := P + 1;
+         end loop;
+         exit when P > Buf'Last;
+
+         --  Eat non-blank characters.
+         F := P;
+         while P <= Buf'Last and then not Is_Blank (Buf (P)) loop
+            P := P + 1;
+         end loop;
+
+         --  Expand res (if needed).
+         if Narg = Res'Last then
+            Resize (Res, 2 * Narg);
+         end if;
+
+         --  Append
+         Narg := Narg + 1;
+         declare
+            --  Make the string 1 based.
+            subtype S is String (1 .. P - F);
+         begin
+            Res (Narg) := new String'(S (Buf (F .. P - 1)));
+         end;
+
+         --  Skip blank.
+         P := P + 1;
+      end loop;
+
+      --  Shrink result.
+      if Res'Last /= Narg then
+         Resize (Res, Narg);
+      end if;
+
+      return Res;
+   end Read_Response_File;
+
    procedure Main
    is
       use Ada.Command_Line;
-      Args : String_List_Access;
+      Args : String_Acc_Arr_Acc;
       Arg_Index : Natural;
    begin
       --  Set program name for error message.
@@ -439,11 +602,11 @@ package body Ghdlmain is
 
       --  Handle case of no argument
       if Argument_Count = 0 then
-         Error ("missing command, try " & Command_Name & " 'help'");
+         Error ("missing command, try: " & Command_Name & " help");
          raise Option_Error;
       end if;
 
-      Args := new String_List (1 .. Argument_Count);
+      Args := new String_Acc_Array (1 .. Argument_Count);
       for I in Args'Range loop
          Args (I) := new String'(Argument (I));
          pragma Assert (Args (I)'First = 1);
@@ -459,40 +622,37 @@ package body Ghdlmain is
       while Arg_Index <= Args'Last loop
          if Args (Arg_Index).all (1) = '@' then
             declare
-               Rsp_Arg : constant String_Access := Args (Arg_Index);
+               Rsp_Arg : String_Acc := Args (Arg_Index);
                Rsp_File : constant String := Rsp_Arg (2 .. Rsp_Arg'Last);
+               Exp_Args : String_Acc_Arr_Acc;
+               Exp_Length : Natural;
+               New_Args : String_Acc_Arr_Acc;
             begin
-               --  Need a second declare block so that the exception handler
-               --  can use Rsp_File.
-               declare
-                  Exp_Args : constant GNAT.OS_Lib.Argument_List :=
-                    Response_File.Arguments_From (Rsp_File);
-                  Exp_Length : constant Natural := Exp_Args'Length;
-                  New_Args : String_List_Access;
-               begin
-                  New_Args :=
-                    new String_List (1 .. Args'Last + Exp_Length - 1);
-
-                  --  Copy arguments from the response file.
-                  New_Args (1 .. Arg_Index - 1) := Args (1 .. Arg_Index - 1);
-                  New_Args (Arg_Index .. Arg_Index + Exp_Length - 1) :=
-                    Exp_Args;
-                  New_Args (Arg_Index + Exp_Length .. New_Args'Last) :=
-                    Args (Arg_Index + 1 .. Args'Last);
-
-                  --  Free array.  Note: Free deallocates both the array and
-                  --  its elements.  But we need to keep the elements.
-                  Args.all := (others => null);
-                  Args (Arg_Index) := Rsp_Arg;
-                  Free (Args);
-
-                  Args := New_Args;
-                  Arg_Index := Arg_Index + Exp_Length;
-               end;
-            exception
-               when Response_File.File_Does_Not_Exist =>
-                  Error ("cannot open response file '" & Rsp_File & "'");
+               Exp_Args := Read_Response_File (Rsp_File);
+               if Exp_Args = null then
                   raise Option_Error;
+               end if;
+
+               Exp_Length := Exp_Args'Length;
+               New_Args :=
+                 new String_Acc_Array (1 .. Args'Last + Exp_Length - 1);
+
+               --  Copy arguments from the response file.
+               New_Args (1 .. Arg_Index - 1) := Args (1 .. Arg_Index - 1);
+               New_Args (Arg_Index .. Arg_Index + Exp_Length - 1) :=
+                 Exp_Args.all;
+               New_Args (Arg_Index + Exp_Length .. New_Args'Last) :=
+                 Args (Arg_Index + 1 .. Args'Last);
+
+               --  Free old arguments array.
+               Free (Args);
+               --  Free response file array.
+               Free (Exp_Args);
+               --  Free response file name.
+               Free (Rsp_Arg);
+
+               Args := New_Args;
+               Arg_Index := Arg_Index + Exp_Length;
             end;
          else
             Arg_Index := Arg_Index + 1;
@@ -502,6 +662,7 @@ package body Ghdlmain is
       declare
          Cmd : Command_Acc;
          First_Arg : Natural;
+         Action_Success : Boolean;
       begin
          Cmd := Find_Command_With_Error (Args (1).all);
          Decode_Command_Options (Cmd.all, Args (2 .. Args'Last), First_Arg);
@@ -510,16 +671,23 @@ package body Ghdlmain is
          Set_Exit_Status (Success);
 
          declare
-            Cmd_Args : Argument_List (1 .. Args'Last - First_Arg + 1);
+            Cmd_Args : String_Acc_Array (1 .. Args'Last - First_Arg + 1);
          begin
             for I in Cmd_Args'Range loop
                Cmd_Args (I) := Args (First_Arg + I - 1);
             end loop;
-            Perform_Action (Cmd.all, Cmd_Args);
+            Perform_Action (Cmd.all, Cmd_Args, Action_Success);
+
+            if not Action_Success then
+               Set_Exit_Status (Failure);
+            end if;
          end;
       end;
 
-      --  Free args.  This frees both the array and the strings.
+      --  Free args.
+      for I in Args'Range loop
+         Free (Args (I));
+      end loop;
       Free (Args);
 
       --if Flags.Dump_Stats then
@@ -542,6 +710,7 @@ package body Ghdlmain is
    begin
       Register_Command (new Command_Help);
       Register_Command (new Command_Version);
-      Register_Command (new Command_Option_Help);
+      Register_Command (new Command_Help_Option);
+      Register_Command (new Command_Help_Warnings);
    end Register_Commands;
 end Ghdlmain;

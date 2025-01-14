@@ -396,6 +396,10 @@ package body Synth.Vhdl_Aggr is
       begin
          El_Type := Aggr_Typ.Rec.E (Iir_Index32 (Pos + 1)).Typ;
          Val := Synth_Expression_With_Type (Syn_Inst, Value, El_Type);
+         if Val = No_Valtyp then
+            Err_P := True;
+            return;
+         end if;
          if Const_P and not Is_Static (Val.Val) then
             Const_P := False;
          end if;
@@ -570,6 +574,7 @@ package body Synth.Vhdl_Aggr is
       Tab_Res := new Valtyp_Array(1 .. Nat32 (Flen));
       Tab_Res.all := (others => No_Valtyp);
 
+      Err_P := False;
       Len := 0;
       Pos := Tab_Res'First;
       Const_P := True;
@@ -718,6 +723,9 @@ package body Synth.Vhdl_Aggr is
          when Type_Vector
            | Type_Array =>
             return Synth_Aggregate_Array (Syn_Inst, Aggr, Aggr_Type);
+         when Type_Slice =>
+            return Synth_Aggregate_Array
+              (Syn_Inst, Aggr, Aggr_Type.Slice_Base);
          when Type_Record
            |  Type_Unbounded_Record =>
             return Synth_Aggregate_Record (Syn_Inst, Aggr, Aggr_Type);

@@ -54,6 +54,7 @@ package body Ortho_Code.Decls is
 
       case Kind is
          when OD_Type
+           | OD_Completer
            | OD_Const
            | OD_Var
            | OD_Local
@@ -72,6 +73,10 @@ package body Ortho_Code.Decls is
          when OD_Subprg_Ext =>
             --  Chain of interfaces.
             Subprg_Inter : O_Dnode;
+
+         when OD_Var_Body =>
+            Var_Decl : O_Dnode;
+            Var_Type : O_Tnode;
 
          when OD_Block =>
             --  Last declaration of this block.
@@ -305,6 +310,19 @@ package body Ortho_Code.Decls is
       end if;
    end New_Type_Decl;
 
+   procedure Complete_Type_Decl (Atype : O_Tnode) is
+   begin
+      Dnodes.Append (Dnode_Common'(Kind => OD_Completer,
+                                   Storage => O_Storage_Private,
+                                   Depth => Cur_Depth,
+                                   Reg => R_Nil,
+                                   Id => O_Ident_Nul,
+                                   Dtype => Atype,
+                                   Ref => 0,
+                                   Info2 => 0,
+                                   others => False));
+   end Complete_Type_Decl;
+
    function Get_Type_Decl (Atype : O_Tnode) return O_Dnode is
    begin
       if Atype <= TDnodes.Last then
@@ -395,6 +413,29 @@ package body Ortho_Code.Decls is
          end if;
       end if;
    end New_Var_Decl;
+
+   procedure New_Var_Body (Var : O_Dnode;
+                           Storage : O_Storage;
+                           Atype : O_Tnode) is
+   begin
+      Dnodes.Append (Dnode_Common'(Kind => OD_Var_Body,
+                                   Storage => Storage,
+                                   Depth => Cur_Depth,
+                                   Reg => R_Nil,
+                                   Var_Decl => Var,
+                                   Var_Type => Atype,
+                                   others => False));
+   end New_Var_Body;
+
+   function Get_Var_Body_Orig (Var : O_Dnode) return O_Dnode is
+   begin
+      return Dnodes.Table (Var).Var_Decl;
+   end Get_Var_Body_Orig;
+
+   function Get_Var_Body_Type (Var : O_Dnode) return O_Tnode is
+   begin
+      return Dnodes.Table (Var).Var_Type;
+   end Get_Var_Body_Type;
 
    Static_Chain_Id : O_Ident := O_Ident_Nul;
 
@@ -655,6 +696,9 @@ package body Ortho_Code.Decls is
             Disp_Decl_Name (Decl);
             Put (" is ");
             Disp_Decl_Type (Decl);
+         when OD_Completer =>
+            Put ("type completer ");
+            Disp_Decl_Type (Decl);
          when OD_Function =>
             Disp_Decl_Storage (Decl);
             Put (" function ");
@@ -700,6 +744,9 @@ package body Ortho_Code.Decls is
             Disp_Decl_Name (Decl);
             Put (": ");
             Disp_Decl_Type (Decl);
+         when OD_Var_Body =>
+            --  TODO
+            null;
          when OD_Body =>
             Put ("body of ");
             Put (Int32 (Get_Body_Decl (Decl)), 0);
@@ -790,30 +837,40 @@ package body Ortho_Code.Decls is
       TDnodes.Set_Last (M.TDnode);
    end Release;
 
-   procedure Alloc_Zero is
+   procedure Alloc_Zero
+   is
    begin
       if not Flag_Debug_Hli then
          --  Expand not explicitly initialized variables.
          declare
             N : O_Dnode;
             Init : O_Cnode;
+            Storage : O_Storage;
          begin
             N := Dnodes.First;
             while N <= Dnodes.Last loop
-               if Get_Decl_Kind (N) = OD_Var then
-                  case Get_Decl_Storage (N) is
-                     when O_Storage_Private
-                       | O_Storage_Public =>
-                        Init := Get_Init_Value (N);
-                        if Init = O_Cnode_Null then
-                           Expand_Var_Zero (N);
-                        end if;
-                     when O_Storage_External =>
-                        null;
-                     when O_Storage_Local =>
-                        raise Program_Error;
-                  end case;
-               end if;
+               case Get_Decl_Kind (N) is
+                  when OD_Var =>
+                     Storage := Get_Decl_Storage (N);
+                     case Storage is
+                        when O_Storage_Private
+                          | O_Storage_Public =>
+                           Init := Get_Init_Value (N);
+                           if Init = O_Cnode_Null then
+                              Expand_Var_Zero (N, Storage, Get_Decl_Type (N));
+                           end if;
+                        when O_Storage_External =>
+                           null;
+                        when O_Storage_Local =>
+                           raise Program_Error;
+                     end case;
+                  when OD_Var_Body =>
+                     Expand_Var_Zero (Get_Var_Body_Orig (N),
+                                      Get_Decl_Storage (N),
+                                      Get_Var_Body_Type (N));
+                  when others =>
+                     null;
+               end case;
                N := Get_Decl_Chain (N);
             end loop;
          end;

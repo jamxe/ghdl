@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import argparse
 import glob
@@ -31,7 +31,7 @@ class Job(object):
 
 def run(keep):
     # List of tests to run
-    tests = glob.glob('*[0-9]')
+    tests = [n.name for n in os.scandir('.') if n.is_dir()]
 
     start_time = time.time()
     jobs = []

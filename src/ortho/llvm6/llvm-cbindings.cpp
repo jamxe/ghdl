@@ -31,10 +31,18 @@
 #include "llvm-c/BitWriter.h"
 
 #include "llvm-c/Analysis.h"
-#include "llvm-c/Transforms/Scalar.h"
-#if LLVM_VERSION_MAJOR >= 7
+
+#if LLVM_VERSION_MAJOR < 17
+# include "llvm-c/Transforms/Scalar.h"
+# if LLVM_VERSION_MAJOR >= 7
 //  Not present in llvm-6, present in llvm-7
-#include "llvm-c/Transforms/Utils.h"
+#  include "llvm-c/Transforms/Utils.h"
+# endif
+#else
+# include "llvm/Passes/OptimizationLevel.h"
+# include "llvm/Analysis/LoopAnalysisManager.h"
+# include "llvm/Analysis/CGSCCPassManager.h"
+# include "llvm/Passes/PassBuilder.h"
 #endif
 
 #if LLVM_VERSION_MAJOR >= 6
@@ -57,6 +65,10 @@
 #include <vector>
 #endif
 
+#include <llvm/ExecutionEngine/ExecutionEngine.h>
+#include <llvm/ExecutionEngine/MCJIT.h>
+#include <llvm/IR/Mangler.h>
+
 #if LLVM_VERSION_MAJOR >= 4
 #define USE_ATTRIBUTES
 #endif
@@ -77,7 +89,11 @@ static LLVMTargetRef TheTarget;
 static LLVMTargetMachineRef TheTargetMachine;
 static LLVMTargetDataRef TheTargetData;
 static LLVMRelocMode TheReloc = LLVMRelocDefault;
-static LLVMCodeGenOptLevel Optimization = LLVMCodeGenLevelDefault;
+static LLVMCodeGenOptLevel OptimizationCGLev = LLVMCodeGenLevelDefault;
+
+#if LLVM_VERSION_MAJOR >= 17
+static OptimizationLevel OptimizationLev = OptimizationLevel::O0;
+#endif
 
 static LLVMBuilderRef Builder;
 static LLVMBuilderRef DeclBuilder;
@@ -118,16 +134,28 @@ set_optimization_level (unsigned level)
 {
   switch(level) {
   case 0:
-    Optimization = LLVMCodeGenLevelNone;
+    OptimizationCGLev = LLVMCodeGenLevelNone;
+#if LLVM_VERSION_MAJOR >= 17
+    OptimizationLev = OptimizationLevel::O0;
+#endif
     break;
   case 1:
-    Optimization = LLVMCodeGenLevelLess;
+    OptimizationCGLev = LLVMCodeGenLevelLess;
+#if LLVM_VERSION_MAJOR >= 17
+    OptimizationLev = OptimizationLevel::O1;
+#endif
     break;
   case 2:
-    Optimization = LLVMCodeGenLevelDefault;
+    OptimizationCGLev = LLVMCodeGenLevelDefault;
+#if LLVM_VERSION_MAJOR >= 17
+    OptimizationLev = OptimizationLevel::O2;
+#endif
     break;
   default:
-    Optimization = LLVMCodeGenLevelAggressive;
+    OptimizationCGLev = LLVMCodeGenLevelAggressive;
+#if LLVM_VERSION_MAJOR >= 17
+    OptimizationLev = OptimizationLevel::O3;
+#endif
     break;
   }
 }
@@ -201,7 +229,34 @@ generateCommon()
     }
   }
 
-  if (Optimization > LLVMCodeGenLevelNone) {
+#if LLVM_VERSION_MAJOR >= 17
+  // Create the analysis managers.
+  LoopAnalysisManager LAM;
+  FunctionAnalysisManager FAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+
+  // Create the new pass manager builder.
+  // Take a look at the PassBuilder constructor parameters for more
+  // customization, e.g. specifying a TargetMachine or various debugging
+  // options.
+  PassBuilder PB;
+
+  // Register all the basic analyses with the managers.
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  // Create the pass manager.
+  // This one corresponds to a typical -O2 optimization pipeline.
+  ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(OptimizationLev);
+
+  // Optimize the IR!
+  MPM.run(*unwrap(TheModule), MAM);
+#else
+  if (OptimizationCGLev > LLVMCodeGenLevelNone) {
     LLVMPassManagerRef PassManager;
     PassManager = LLVMCreateFunctionPassManagerForModule (TheModule);
 
@@ -214,7 +269,9 @@ generateCommon()
       LLVMRunFunctionPassManager (PassManager, Func);
     }
   }
+#endif
 }
+
 extern "C" void
 generate_object(char *Filename)
 {
@@ -292,7 +349,7 @@ ortho_llvm_init(const char *Filename, unsigned FilenameLength)
 
   //  Create a target machine
   TheTargetMachine = LLVMCreateTargetMachine
-    (TheTarget, Triple, "", "", Optimization, TheReloc,
+    (TheTarget, Triple, "", "", OptimizationCGLev, TheReloc,
      LLVMCodeModelDefault);
 
 #if LLVM_VERSION_MAJOR < 4
@@ -329,6 +386,7 @@ ortho_llvm_init(const char *Filename, unsigned FilenameLength)
 
 #ifdef USE_ATTRIBUTES
   unsigned AttrId;
+  unsigned val;
 
   AttrId = LLVMGetEnumAttributeKindForName("nounwind", 8);
   assert (AttrId != 0);
@@ -336,7 +394,12 @@ ortho_llvm_init(const char *Filename, unsigned FilenameLength)
 
   AttrId = LLVMGetEnumAttributeKindForName("uwtable", 7);
   assert (AttrId != 0);
-  UwtableAttr = LLVMCreateEnumAttribute(LLVMGetGlobalContext(), AttrId, 1);
+#if LLVM_VERSION_MAJOR > 14
+  val = 1;  // sync
+#else
+  val = 0;  // Not an int, just a flag
+#endif
+  UwtableAttr = LLVMCreateEnumAttribute(LLVMGetGlobalContext(), AttrId, val);
 #endif
 
 #ifdef USE_DEBUG
@@ -353,7 +416,7 @@ ortho_llvm_init(const char *Filename, unsigned FilenameLength)
 					    StringRef(*DebugCurrentDirectory));
     DebugCurrentCU = DBuilder->createCompileUnit
       (llvm::dwarf::DW_LANG_C, DebugCurrentFile, StringRef("ortho-llvm"),
-       Optimization > LLVMCodeGenLevelNone, StringRef(), 0);
+       OptimizationCGLev > LLVMCodeGenLevelNone, StringRef(), 0);
 
     DebugCurrentScope = DebugCurrentCU;
   }
@@ -660,6 +723,7 @@ struct OFnodeBase {
   OFKind Kind;
   OTnode FType;
   OIdent Ident;
+  OTnode Parent;
   OFnodeBase(OFKind Kind, OTnode FType, OIdent Ident) :
     Kind(Kind), FType(FType), Ident(Ident) {}
 };
@@ -798,6 +862,9 @@ finish_record_type(OElementList *Els, OTnode *Res)
     T->Els = std::move(*Els->Els);
   }
   *Res = T;
+
+  for (OFnodeBase *Field : T->Els)
+    Field->Parent = T;
 }
 
 struct OElementSublist {
@@ -1120,7 +1187,7 @@ extern "C" void
 finish_record_aggr(ORecordAggrList *List, OCnode *Res)
 {
   *Res = {LLVMConstStruct(List->Els, List->Len, 0), List->Atype};
-  delete List->Els;
+  delete [] List->Els;
 }
 
 struct OArrayAggrList {
@@ -1146,7 +1213,7 @@ extern "C" void
 finish_array_aggr(OArrayAggrList *List, OCnode *Res)
 {
   *Res = {LLVMConstArray(List->ElType, List->Els, List->Len), List->Atype};
-  delete List->Els;
+  delete [] List->Els;
 }
 
 extern "C" OCnode
@@ -1327,6 +1394,21 @@ new_var_decl(ODnode *Res, OIdent Ident, OStorage Storage, OTnode Atype)
     }
 #endif
   }
+}
+
+extern "C" void
+new_var_body(ODnode Res, OStorage Storage, OTnode Atype)
+{
+    switch(Storage) {
+    case O_Storage_Public:
+    case O_Storage_Private:
+      LLVMSetInitializer(Res->Ref, LLVMConstNull(Atype->Ref));
+      break;
+    case O_Storage_External:
+    case O_Storage_Local:
+      abort();
+      break;
+    }
 }
 
 struct ODnodeConst : ODnodeBase {
@@ -2113,7 +2195,7 @@ new_function_call (OAssocList *Assocs)
   } else {
     Res = nullptr;
   }
-  delete Assocs->Vals;
+  delete [] Assocs->Vals;
   return { Res, Assocs->Subprg->Dtype };
 }
 
@@ -2124,7 +2206,7 @@ new_procedure_call (OAssocList *Assocs)
     LLVMBuildCall2(Builder, Assocs->Subprg->Ftype, Assocs->Subprg->Ref,
                    Assocs->Vals, Assocs->Subprg->Inters.size(), "");
   }
-  delete Assocs->Vals;
+  delete [] Assocs->Vals;
 }
 
 extern "C" void
@@ -2804,3 +2886,77 @@ new_debug_line_stmt (unsigned Line)
   }
 #endif
 }
+
+#if LLVM_VERSION_MAJOR > 10
+
+static ExecutionEngine *EE;
+
+extern "C" int
+llvm_jit_init(void)
+{
+  std::string error;
+
+  EE = llvm::EngineBuilder(std::unique_ptr<Module>(unwrap(TheModule)))
+    .setErrorStr(&error)
+    .setEngineKind(llvm::EngineKind::JIT)
+     .create();
+  EE->setProcessAllSections(true);
+
+  return EE != NULL;
+}
+
+extern "C" void
+llvm_jit_finalize(void)
+{
+  generateCommon();
+  EE->finalizeObject();
+}
+
+extern "C" void *
+llvm_jit_get_address (ODnode decl)
+{
+  llvm::Value *val = unwrap(decl->Ref);
+
+  switch (decl->getKind()) {
+  case ODKConst:
+  case ODKVar: {
+    const llvm::GlobalValue *gv = dyn_cast<const GlobalValue>(val);
+
+    return (void *)EE->getGlobalValueAddress(std::string(gv->getName()));
+  }
+  case ODKSubprg:
+    return EE->getPointerToFunction(dyn_cast<Function>(val));
+  default:
+    abort();
+  }
+}
+
+extern "C" void
+llvm_jit_set_address (ODnode decl, void *addr)
+{
+  const llvm::GlobalValue *val = dyn_cast<const GlobalValue>(unwrap(decl->Ref));
+
+  switch (decl->getKind()) {
+  case ODKConst:
+  case ODKVar:
+  case ODKSubprg:
+    EE->addGlobalMapping(val, addr);
+    return;
+  default:
+    abort();
+  }
+}
+
+extern "C" size_t
+llvm_jit_get_byte_size (OTnode typ)
+{
+  return typ->getSize();
+}
+
+extern "C" size_t
+llvm_jit_get_field_offset (OFnodeRec *field)
+{
+  return LLVMOffsetOfElement(TheTargetData, field->Parent->Ref, field->Index);
+}
+
+#endif

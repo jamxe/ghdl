@@ -28,6 +28,8 @@
 
 #if defined(__APPLE__) || defined(__OpenBSD__)
 #define MAP_ANONYMOUS MAP_ANON
+#elif defined(__NetBSD__)
+/* none */
 #else
 #define HAVE_MREMAP
 #endif
@@ -54,6 +56,8 @@ mmap_realloc (void *ptr, int old_size, int size)
   void *res;
 #ifdef HAVE_MREMAP
   res = mremap (ptr, old_size, size, MREMAP_MAYMOVE);
+  if (res == MAP_FAILED)
+    return NULL;
 #else
   res = mmap (NULL, size, PROT_READ | PROT_WRITE,
 	      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -63,10 +67,6 @@ mmap_realloc (void *ptr, int old_size, int size)
   munmap (ptr, old_size);
 #endif
   /* printf ("mremap (%p, %d, %d) = %p\n", ptr, old_size, size, res); */
-#if 0
-  if (res == MAP_FAILED)
-    return NULL;
-#endif
   return res;
 }
 

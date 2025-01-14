@@ -16,10 +16,14 @@
 
 with Name_Table;
 with Files_Map;
+with Libraries;
+
 with Vhdl.Errors; use Vhdl.Errors;
 with Vhdl.Utils; use Vhdl.Utils;
 with Vhdl.Configuration;
-with Libraries;
+with Vhdl.Sem_Inst;
+
+with Translation;
 with Trans.Chap7;
 use Trans.Helpers;
 with Trans.Helpers2; use Trans.Helpers2;
@@ -1675,11 +1679,14 @@ package body Trans.Rtis is
             Val        : O_Cnode;
             El_Const   : O_Dnode;
             Mode       : Natural;
-            Mark       : Id_Mark_Type;
+            Mark, Mark2 : Id_Mark_Type;
          begin
             Push_Identifier_Prefix (Mark, Get_Identifier (El));
 
+            Push_Identifier_Prefix (Mark2, "ET");
             Type_Rti := Generate_Type_Definition (El_Type);
+            Pop_Identifier_Prefix (Mark2);
+
             Max_Depth := Rti_Depth_Type'Max
               (Max_Depth, Get_Info (El_Type).B.Rti_Max_Depth);
 
@@ -1994,6 +2001,9 @@ package body Trans.Rtis is
                Comm := Ghdl_Rtik_Port;
                Var := Info.Signal_Sig;
                Mode := Iir_Mode'Pos (Get_Mode (Decl));
+            when Iir_Kind_Interface_View_Declaration =>
+               Comm := Ghdl_Rtik_Port;
+               Var := Info.Signal_Sig;
             when Iir_Kind_Constant_Declaration =>
                Comm := Ghdl_Rtik_Constant;
                Var := Info.Object_Var;
@@ -2251,11 +2261,11 @@ package body Trans.Rtis is
 
    procedure Generate_Instance (Stmt : Iir; Parent : O_Dnode)
    is
+      Inst : constant Iir := Get_Instantiated_Unit (Stmt);
+      Info : constant Block_Info_Acc := Get_Info (Stmt);
       Name : O_Dnode;
       List : O_Record_Aggr_List;
       Val  : O_Cnode;
-      Inst : constant Iir := Get_Instantiated_Unit (Stmt);
-      Info : constant Block_Info_Acc := Get_Info (Stmt);
    begin
       Name := Generate_Name (Stmt);
 
@@ -2278,9 +2288,25 @@ package body Trans.Rtis is
            (Get_Info (Get_Named_Entity (Inst)).Comp_Rti_Const);
       else
          declare
-            Ent : constant Iir := Get_Entity_From_Entity_Aspect (Inst);
+            Ent : Iir;
+            Ent_Info : Block_Info_Acc;
          begin
-            Val := New_Rti_Address (Get_Info (Ent).Block_Rti_Const);
+            --  Check if entity has been instantiated.
+            Ent := Get_Instantiated_Header (Stmt);
+            --  If not, or if it is not macro expanded, use the named entity.
+            --  Otherwise, the maco-expanded entity is used.
+            if Ent = Null_Iir
+              or else not Get_Macro_Expand_Flag (Ent)
+            then
+               Ent := Get_Entity_From_Entity_Aspect (Inst);
+            end if;
+            Ent_Info := Get_Info (Ent);
+            if Ent_Info = null then
+               --  The block is never used.
+               Val := New_Null_Access (Ghdl_Rti_Access);
+            else
+               Val := New_Rti_Address (Ent_Info.Block_Rti_Const);
+            end if;
          end;
       end if;
 
@@ -2330,7 +2356,8 @@ package body Trans.Rtis is
                   Add_Rti_Node (Info.Object_Rti);
                end;
             when Iir_Kind_Signal_Declaration
-              | Iir_Kind_Interface_Signal_Declaration =>
+              | Iir_Kind_Interface_Signal_Declaration
+              | Iir_Kind_Interface_View_Declaration =>
                declare
                   Info : constant Signal_Info_Acc := Get_Info (Decl);
                begin
@@ -2344,7 +2371,7 @@ package body Trans.Rtis is
                begin
                   Sig := Get_Attribute_Implicit_Chain (Decl);
                   while Is_Valid (Sig) loop
-                     case Iir_Kinds_Signal_Attribute (Get_Kind (Sig)) is
+                     case Get_Kind (Sig) is
                         when Iir_Kind_Stable_Attribute
                           | Iir_Kind_Quiet_Attribute
                           | Iir_Kind_Transaction_Attribute =>
@@ -2353,6 +2380,10 @@ package body Trans.Rtis is
                            Add_Rti_Node (Info.Signal_Rti);
                         when Iir_Kind_Delayed_Attribute =>
                            null;
+                        when Iir_Kinds_External_Name =>
+                           null;
+                        when others =>
+                           raise Internal_Error;
                      end case;
                      Sig := Get_Attr_Chain (Sig);
                   end loop;
@@ -2414,9 +2445,17 @@ package body Trans.Rtis is
                end if;
 
             when Iir_Kind_Package_Instantiation_Declaration
-              |  Iir_Kind_Interface_Package_Declaration
-              | Iir_Kind_Package_Instantiation_Body =>
+               | Iir_Kind_Interface_Package_Declaration
+               | Iir_Kind_Package_Instantiation_Body
+               | Iir_Kind_Interface_Function_Declaration
+               | Iir_Kind_Interface_Procedure_Declaration =>
                --  FIXME: todo
+               null;
+
+            when Iir_Kind_Interface_Type_Declaration =>
+               null;
+
+            when Iir_Kind_Mode_View_Declaration =>
                null;
 
             when Iir_Kind_Psl_Default_Clock =>
@@ -2527,9 +2566,13 @@ package body Trans.Rtis is
                Clause := Blk;
                while Clause /= Null_Iir loop
                   Bod := Get_Generate_Statement_Body (Clause);
-                  Push_Identifier_Prefix (Mark, Get_Identifier (Bod));
-                  Generate_Block (Bod, Rti);
-                  Pop_Identifier_Prefix (Mark);
+                  if not Translation.Flag_Discard_Unused_Generate
+                    or else Get_Use_Flag (Bod)
+                  then
+                     Push_Identifier_Prefix (Mark, Get_Identifier (Bod));
+                     Generate_Block (Bod, Rti);
+                     Pop_Identifier_Prefix (Mark);
+                  end if;
                   Clause := Get_Generate_Else_Clause (Clause);
                   Num := Num + 1;
                end loop;
@@ -2543,9 +2586,13 @@ package body Trans.Rtis is
                while Alt /= Null_Iir loop
                   if not Get_Same_Alternative_Flag (Alt) then
                      Bod := Get_Associated_Block (Alt);
-                     Push_Identifier_Prefix (Mark, Get_Identifier (Bod));
-                     Generate_Block (Bod, Rti);
-                     Pop_Identifier_Prefix (Mark);
+                     if not Translation.Flag_Discard_Unused_Generate
+                       or else Get_Use_Flag (Bod)
+                     then
+                        Push_Identifier_Prefix (Mark, Get_Identifier (Bod));
+                        Generate_Block (Bod, Rti);
+                        Pop_Identifier_Prefix (Mark);
+                     end if;
                      Num := Num + 1;
                   end if;
                   Alt := Get_Chain (Alt);
@@ -2667,6 +2714,14 @@ package body Trans.Rtis is
       end if;
    end Generate_For_Generate_Statement;
 
+   procedure Generate_Entity_Decl (Ent : Iir)
+   is
+      Info : constant Block_Info_Acc := Get_Info (Ent);
+   begin
+      New_Const_Decl (Info.Block_Rti_Const, Create_Identifier ("RTI"),
+                      Global_Storage, Ghdl_Rtin_Block_File);
+   end Generate_Entity_Decl;
+
    procedure Generate_Block (Blk : Iir; Parent_Rti : O_Dnode)
    is
       Info : constant Ortho_Info_Acc := Get_Info (Blk);
@@ -2685,8 +2740,11 @@ package body Trans.Rtis is
 
       Field_Off : O_Cnode;
    begin
-      if Global_Storage /= O_Storage_External then
-         if Get_Kind (Get_Parent (Blk)) = Iir_Kind_Design_Unit then
+      if Get_Kind (Blk) = Iir_Kind_Entity_Declaration then
+         Rti := Info.Block_Rti_Const;
+         Rti_Type := Ghdl_Rtin_Block_File;
+      elsif Global_Storage /= O_Storage_External then
+         if Get_Kind (Blk) in Iir_Kinds_Library_Unit then
             --  Also include filename for units.
             Rti_Type := Ghdl_Rtin_Block_File;
          else
@@ -2965,9 +3023,16 @@ package body Trans.Rtis is
                --  The library.
                declare
                   Lib : Iir_Library_Declaration;
+                  Dunit : Iir;
                begin
-                  Lib := Get_Library (Get_Design_File
-                                      (Get_Design_Unit (Lib_Unit)));
+                  Dunit := Get_Design_Unit (Lib_Unit);
+                  if Get_Kind (Dunit)
+                    = Iir_Kind_Component_Instantiation_Statement
+                  then
+                     Dunit := Get_Design_Unit
+                       (Vhdl.Sem_Inst.Get_Origin (Lib_Unit));
+                  end if;
+                  Lib := Get_Library (Get_Design_File (Dunit));
                   Generate_Library (Lib, False);
                   Rti := Get_Info (Lib).Library_Rti_Const;
                end;
@@ -3016,7 +3081,7 @@ package body Trans.Rtis is
             when Iir_Kind_Package_Declaration =>
                Nbr_Pkgs := Nbr_Pkgs + 1;
             when Iir_Kind_Package_Instantiation_Declaration =>
-               if Get_Macro_Expanded_Flag
+               if Get_Macro_Expand_Flag
                  (Get_Uninstantiated_Package_Decl (Lib_Unit))
                then
                   Nbr_Pkgs := Nbr_Pkgs + 1;

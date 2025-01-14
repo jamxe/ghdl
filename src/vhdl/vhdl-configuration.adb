@@ -55,9 +55,12 @@ package body Vhdl.Configuration is
          --    a direct entity instantiation
          --  * a configuration may be referenced by itself for a recursive
          --    instantiation
-         pragma Assert (Get_Configuration_Done_Flag (Unit)
-                          or else (Get_Kind (Get_Library_Unit (Unit))
-                                     = Iir_Kind_Configuration_Declaration));
+         if not Get_Configuration_Done_Flag (Unit)
+           and then (Get_Kind (Get_Library_Unit (Unit))
+                       /= Iir_Kind_Configuration_Declaration)
+         then
+            Error_Msg_Elab (Unit, "recursive dependency of design unit");
+         end if;
          return;
       end if;
       Set_Configuration_Mark_Flag (Unit, True);
@@ -173,17 +176,17 @@ package body Vhdl.Configuration is
          begin
             Bod := Libraries.Find_Secondary_Unit (Unit, Null_Identifier);
             if Get_Need_Body (Lib_Unit) then
-               if not Flags.Flag_Elaborate_With_Outdated then
-                  --  LIB_UNIT requires a body.
-                  if Bod = Null_Iir then
-                     Error_Msg_Elab
-                       (Lib_Unit, "body of %n was never analyzed", +Lib_Unit);
-                  elsif Get_Date (Bod) < Get_Date (Unit) then
-                     --  Cannot use BOD as location, as the location may not
-                     --  exist.
-                     Error_Msg_Elab (Lib_Unit, "%n is outdated", +Bod);
-                     Bod := Null_Iir;
-                  end if;
+               --  LIB_UNIT requires a body.
+               if Bod = Null_Iir then
+                  Error_Msg_Elab
+                    (Lib_Unit, "body of %n was never analyzed", +Lib_Unit);
+               elsif not Flags.Flag_Elaborate_With_Outdated
+                 and then Get_Date (Bod) < Get_Date (Unit)
+               then
+                  --  Cannot use BOD as location, as the location may not
+                  --  exist.
+                  Error_Msg_Elab (Lib_Unit, "%n is outdated", +Bod);
+                  Bod := Null_Iir;
                end if;
             else
                if Bod /= Null_Iir
@@ -240,7 +243,9 @@ package body Vhdl.Configuration is
            | Iir_Kind_Psl_Default_Clock
            | Iir_Kind_Psl_Declaration
            | Iir_Kind_Psl_Endpoint_Declaration
-           | Iir_Kind_Simple_Simultaneous_Statement =>
+           | Iir_Kind_Simple_Simultaneous_Statement
+           | Iir_Kind_Simultaneous_If_Statement
+           | Iir_Kind_Simultaneous_Case_Statement =>
             null;
          when others =>
             Error_Kind ("add_design_concurrent_stmts(2)", Stmt);
@@ -663,7 +668,10 @@ package body Vhdl.Configuration is
       case Get_Kind (Lib_Unit) is
          when Iir_Kind_Entity_Declaration =>
             --  Use WORK as location (should use a command line location ?)
-            Load_Design_Unit (Unit, Work_Library);
+            Load_Design_Unit (Unit, Command_Line_Location);
+            if Nbr_Errors /= 0 then
+               return Null_Iir;
+            end if;
             Lib_Unit := Get_Library_Unit (Unit);
             if Secondary_Id /= Null_Identifier then
                Unit := Find_Secondary_Unit (Unit, Secondary_Id);
@@ -686,7 +694,7 @@ package body Vhdl.Configuration is
                   Unit := Get_Design_Unit (Arch_Unit);
                end;
             end if;
-            Load_Design_Unit (Unit, Lib_Unit);
+            Load_Design_Unit (Unit, Command_Line_Location);
             if Nbr_Errors /= 0 then
                return Null_Iir;
             end if;
@@ -735,6 +743,10 @@ package body Vhdl.Configuration is
       Name := Get_Architecture (Hier_Name);
       if Name /= Null_Node then
          Name := Get_Named_Entity (Name);
+         if Name = Null_Iir then
+            --  Architecture name is unknown.
+            return;
+         end if;
          pragma Assert (Get_Kind (Name) = Iir_Kind_Architecture_Body);
       else
          Name := Get_Entity_Name (Hier_Name);
@@ -923,6 +935,10 @@ package body Vhdl.Configuration is
                null;
          end case;
 
+         if Nbr_Errors /= 0 then
+            return Walk_Abort;
+         end if;
+
          return Walk_Continue;
       end Add_Entity_Cb;
 
@@ -1061,6 +1077,9 @@ package body Vhdl.Configuration is
 
          --  1. Add all design entities in the name table.
          Status := Walk_Design_Units (Lib, Add_Entity_Cb'Access);
+         if Status = Walk_Abort then
+            return;
+         end if;
          pragma Assert (Status = Walk_Continue);
 
          --  2. Walk architecture and configurations, and mark instantiated
@@ -1117,6 +1136,10 @@ package body Vhdl.Configuration is
    begin
       --  FROM is a library or a design file.
       Top.Mark_Instantiated_Units (From, Loc);
+      if Nbr_Errors > 0 then
+         return Null_Iir;
+      end if;
+
       Top.Find_First_Top_Entity (From);
 
       if Top.Nbr_Top_Entities = 1 then

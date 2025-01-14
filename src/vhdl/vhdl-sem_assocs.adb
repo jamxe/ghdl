@@ -36,6 +36,9 @@ package body Vhdl.Sem_Assocs is
       N_Assoc : Iir;
       Actual : Iir;
    begin
+      if Get_Kind (Assoc) = Iir_Kind_Association_Element_Open then
+         return Assoc;
+      end if;
       Actual := Get_Actual (Assoc);
       case Get_Kind (Inter) is
          when Iir_Kind_Interface_Package_Declaration =>
@@ -519,8 +522,8 @@ package body Vhdl.Sem_Assocs is
       if Assoc /= Null_Iir then
          Error_Msg_Sem
            (+Assoc, "cannot associate " & Get_Mode_Name (Fmode) & " %n"
-              & " with actual port of mode "
-              & Get_Mode_Name (Amode), +Formal);
+              & " with actual %n of mode "
+              & Get_Mode_Name (Amode), (+Formal, +Actual));
       end if;
       return False;
    end Check_Port_Association_Mode_Restrictions;
@@ -701,8 +704,10 @@ package body Vhdl.Sem_Assocs is
                        and then
                        Eval_Int_In_Range (Eval_Pos (Index), Choice_Range)
                      then
-                        --  FIXME: overlap.
-                        raise Internal_Error;
+                        --  Overlap: cannot be used.
+                        --  This will be reported later while checking for
+                        --  all associations.
+                        null;
                      end if;
                   end;
                when others =>
@@ -957,6 +962,8 @@ package body Vhdl.Sem_Assocs is
          declare
             Index_Constraint : Iir;
             Index_Subtype_Constraint : Iir;
+            Indiv_Assoc : Iir;
+            Dir : Direction_Type;
          begin
             --  Create an index subtype.
             case Get_Kind (Base_Index) is
@@ -978,8 +985,23 @@ package body Vhdl.Sem_Assocs is
             Location_Copy (Index_Subtype_Constraint, Actual);
             Set_Range_Constraint (Actual_Index, Index_Subtype_Constraint);
             Set_Type_Staticness (Actual_Index, Locally);
-            Set_Direction (Index_Subtype_Constraint,
-                           Get_Direction (Index_Constraint));
+
+            --  LRM08 5.3.2.2 Index constraints and discrete ranges
+            --  e) 2) If the subtype index range is undefed, and the interface
+            --  object or subelement [...] is associated by a single
+            --  association element in which the formal designator is a slice
+            --  name, then the direction of the index range of the object is
+            --  that of the corresponding index subtype of the interface
+            --  object.
+            Indiv_Assoc := Get_Individual_Association_Chain (Assoc);
+            if Get_Chain (Indiv_Assoc) = Null_Iir
+              and then Get_Kind (Indiv_Assoc) = Iir_Kind_Choice_By_Range
+            then
+               Dir := Get_Direction (Get_Choice_Range (Indiv_Assoc));
+            else
+               Dir := Get_Direction (Index_Constraint);
+            end if;
+            Set_Direction (Index_Subtype_Constraint, Dir);
 
             --  For ownership purpose, the bounds must be copied otherwise
             --  they would be referenced before being defined.  This is non
@@ -987,7 +1009,7 @@ package body Vhdl.Sem_Assocs is
             Low := Copy_Constant (Low);
             High := Copy_Constant (High);
 
-            case Get_Direction (Index_Constraint) is
+            case Dir is
                when Dir_To =>
                   Set_Left_Limit (Index_Subtype_Constraint, Low);
                   Set_Left_Limit_Expr (Index_Subtype_Constraint, Low);
@@ -1007,7 +1029,7 @@ package body Vhdl.Sem_Assocs is
          declare
             Act_High, Act_Low : Iir;
          begin
-            Get_Low_High_Limit (Get_Range_Constraint (Actual_Type),
+            Get_Low_High_Limit (Get_Range_Constraint (Actual_Index),
                                 Act_Low, Act_High);
             if Eval_Pos (Act_Low) /= Eval_Pos (Low)
               or Eval_Pos (Act_High) /= Eval_Pos (High)
@@ -1029,6 +1051,13 @@ package body Vhdl.Sem_Assocs is
             while El /= Null_Iir loop
                Finish_Individual_Association1
                  (Get_Associated_Expr (El), El_Type);
+               El := Get_Chain (El);
+            end loop;
+         else
+            El := Chain;
+            while El /= Null_Node loop
+               Finish_Individual_Assoc_Array
+                 (Actual, Get_Associated_Expr (El), Dim + 1);
                El := Get_Chain (El);
             end loop;
          end if;
@@ -1091,8 +1120,7 @@ package body Vhdl.Sem_Assocs is
                Set_Resolution_Indication
                  (Ntype, Get_Resolution_Indication (Atype));
             end if;
-            if Get_Kind (Inter) = Iir_Kind_Interface_Signal_Declaration
-            then
+            if Get_Kind (Inter) = Iir_Kind_Interface_Signal_Declaration then
                --  The subtype is used for signals.
                Set_Has_Signal_Flag (Ntype, True);
             end if;
@@ -1185,7 +1213,9 @@ package body Vhdl.Sem_Assocs is
       case Get_Kind (Atype) is
          when Iir_Kind_Array_Subtype_Definition
            | Iir_Kind_Array_Type_Definition =>
-            if Get_Constraint_State (Atype) = Fully_Constrained then
+            if Get_Constraint_State (Atype) = Fully_Constrained
+              and then Are_Array_Indexes_Locally_Static (Atype)
+            then
                Finish_Individual_Assoc_Array_Subtype (Assoc, Atype, 1);
                Set_Actual_Type (Assoc, Atype);
             else
@@ -1511,8 +1541,9 @@ package body Vhdl.Sem_Assocs is
          --  It is an error if an actual of open is associated with a
          --  formal that is associated individually.
          if Get_Whole_Association_Flag (Assoc) = False then
-            Error_Msg_Sem
-              (+Assoc, "cannot associate individually with open");
+            --  TODO: check with resolved signals
+            Error_Msg_Sem_Relaxed
+              (Assoc, Warnid_Open_Assoc, "individual association with open");
          end if;
 
          Formal := Get_Formal (Assoc);
@@ -1726,6 +1757,13 @@ package body Vhdl.Sem_Assocs is
       Set_Actual_Type (Assoc, Actual_Type);
       Set_Associated_Type (Inter_Def, Actual_Type);
 
+      --  Previously, the test was: Get_Has_Signal_Flag (Inter_Def)
+      --  But this flag might be set by an architecture which might not be
+      --  known.
+      if Get_Signal_Type_Flag (Actual_Type) then
+         Vhdl.Sem_Types.Set_Type_Has_Signal (Actual_Type);
+      end if;
+
       --  FIXME: it is not clear at all from the LRM how the implicit
       --  associations are done...
       Op_Eq := Sem_Implicit_Operator_Association
@@ -1911,10 +1949,15 @@ package body Vhdl.Sem_Assocs is
    function Sem_Association_Subprogram_Open (Inter : Iir; Loc : Iir)
                                             return Iir
    is
+      Default : constant Iir := Get_Default_Subprogram (Inter);
       Res : Iir;
    begin
-      Res := Sem_Identifier_Name
-        (Get_Identifier (Inter), Loc, False, False);
+      if Get_Kind (Default) = Iir_Kind_Box_Name then
+         Res := Sem_Identifier_Name
+           (Get_Identifier (Inter), Loc, False, False);
+      else
+         Res := Get_Named_Entity (Default);
+      end if;
       if Is_Error (Res) then
          return Null_Iir;
       end if;
@@ -2139,13 +2182,19 @@ package body Vhdl.Sem_Assocs is
       end if;
 
       if Match = Not_Compatible then
-         if Finish and then not Is_Error (Actual) then
+         if Finish
+           and then not (Is_Error (Actual)
+                           or else (Get_Type (Actual) /= Null_Iir
+                                      and then Is_Error (Get_Type (Actual))))
+         then
             Report_Start_Group;
             Error_Msg_Sem
               (+Assoc, "can't associate %n with %n", (+Actual, +Inter));
-            Error_Msg_Sem
-              (+Assoc, "(type of %n is " & Disp_Type_Of (Actual) & ")",
-               (1 => +Actual));
+            if Get_Type (Actual) /= Null_Iir then
+               Error_Msg_Sem
+                 (+Assoc, "(type of %n is " & Disp_Type_Of (Actual) & ")",
+                  (1 => +Actual));
+            end if;
             Error_Msg_Sem
               (+Inter, "(type of %n is " & Disp_Type_Of (Inter) & ")", +Inter);
             Report_End_Group;
@@ -2275,15 +2324,31 @@ package body Vhdl.Sem_Assocs is
            and then not Is_Fully_Constrained_Type (Get_Type (In_Conv))
          then
             Error_Msg_Sem
-              (+Assoc, "type of actual conversion must be fully constrained");
+              (+In_Conv,
+               "type of actual conversion must be fully constrained");
          end if;
          if (Get_Mode (Inter) in Iir_Out_Modes
                or else Get_Mode (Inter) = Iir_Linkage_Mode)
            and then Out_Conv /= Null_Iir
            and then not Is_Fully_Constrained_Type (Get_Type (Out_Conv))
          then
-            Error_Msg_Sem
-              (+Assoc, "type of formal conversion must be fully constrained");
+            declare
+               Msgid : Msgid_Type;
+            begin
+               if Flag_Relaxed_Rules
+                 and then Get_Kind (Out_Conv) = Iir_Kind_Type_Conversion
+               then
+                  --  With -frelaxed, the bounds of the formal could be
+                  --  computed using an implicit type conversion from the
+                  --  actual bounds.
+                  Msgid := Warnid_Port;
+               else
+                  Msgid := Msgid_Error;
+               end if;
+               Report_Msg
+                 (Msgid, Semantic, +Out_Conv,
+                  "type of formal conversion must be fully constrained");
+            end;
          end if;
       end if;
 
@@ -2789,9 +2854,7 @@ package body Vhdl.Sem_Assocs is
                   Res : Iir;
                   Ref : Iir;
                begin
-                  if Finish
-                    and then Get_Kind (Def) = Iir_Kind_Reference_Name
-                  then
+                  if Finish and then Get_Kind (Def) = Iir_Kind_Box_Name then
                      --  Resolve now the default subprogram (as we have the
                      --  context for that).
                      Res := Sem_Association_Subprogram_Open (Inter, Loc);
@@ -2869,7 +2932,7 @@ package body Vhdl.Sem_Assocs is
                            Err := True;
                         elsif not Is_Open then
                            Warning_Msg_Sem
-                             (Warnid_No_Assoc, +Loc,
+                             (Warnid_Missing_Assoc, +Loc,
                               "%n of mode IN is not connected", +Inter);
                         end if;
                      when Iir_Out_Mode
@@ -2886,7 +2949,7 @@ package body Vhdl.Sem_Assocs is
                            Err := True;
                         elsif not Is_Open then
                            Warning_Msg_Sem
-                             (Warnid_No_Assoc, +Loc,
+                             (Warnid_Missing_Assoc, +Loc,
                               "%n of mode OUT is not connected", +Inter);
                         end if;
                      when Iir_Unknown_Mode =>

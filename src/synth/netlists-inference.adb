@@ -16,6 +16,8 @@
 --  You should have received a copy of the GNU General Public License
 --  along with this program.  If not, see <gnu.org/licenses>.
 
+with Errorout;
+
 with Netlists.Utils; use Netlists.Utils;
 with Netlists.Gates; use Netlists.Gates;
 with Netlists.Gates_Ports; use Netlists.Gates_Ports;
@@ -84,10 +86,10 @@ package body Netlists.Inference is
          when Edge_Module_Id =>
             return True;
          when Id_And =>
-            --  Assume the condition is canonicalized, ie of the form:
-            --  CLK and EXPR.
-            --  FIXME: do it!
-            return Has_Clock (Get_Input_Net (Inst, 0));
+            --  The condition is canonicalized, ie of the form:
+            --  CLK and EXPR (as AND gates must be always built with
+            --  build2_Canon_And).
+            return Get_Id (Get_Input_Instance (Inst, 0)) in Edge_Module_Id;
          when others =>
             return False;
       end case;
@@ -434,6 +436,40 @@ package body Netlists.Inference is
       return Res;
    end Infere_FF_Create;
 
+   --  Push extract after mux2.
+   --  This is a kind of reduction.
+   procedure Push_Extract (Ctxt : Context_Acc;
+                           Val : in out Net;
+                           Off : Uns32;
+                           Last_Mux : in out Instance;
+                           W : Width)
+   is
+      Inst : constant Instance := Get_Net_Parent (Val);
+   begin
+      case Get_Id (Inst) is
+         when Id_Mux2 =>
+            declare
+               Res : Net;
+               I0, I1 : Net;
+               Mux : Instance;
+            begin
+               I0 := Get_Input_Net (Inst, 1);
+               Push_Extract (Ctxt, I0, Off, Last_Mux, W);
+               I1 := Get_Input_Net (Inst, 2);
+               Push_Extract (Ctxt, I1, Off, Last_Mux, W);
+               Res := Build_Mux2 (Ctxt, Get_Input_Net (Inst, 0), I0, I1);
+               Mux := Get_Net_Parent (Res);
+               Set_Location (Mux, Get_Location (Inst));
+               if Inst = Last_Mux then
+                  Last_Mux := Mux;
+               end if;
+               Val := Res;
+            end;
+         when others =>
+            Val := Build_Extract (Ctxt, Val, Off, W);
+      end case;
+   end Push_Extract;
+
    --  Remove the Mux2 and handle the 'else' branch.
    procedure Infere_FF_Mux (Ctxt : Context_Acc;
                             Prev_Val : Net;
@@ -447,6 +483,7 @@ package body Netlists.Inference is
       Sel      : constant Input := Get_Mux2_Sel (Last_Mux);
       I0       : constant Input := Get_Mux2_I0 (Last_Mux);
       I1       : constant Input := Get_Mux2_I1 (Last_Mux);
+      Els2     : Net;
       Els_Inst : Instance;
       Els_Clk  : Net;
       Els_En   : Net;
@@ -461,6 +498,12 @@ package body Netlists.Inference is
          --  The 'else' part is not a loop.  It should be a second FF for a
          --  DDR (not yet supported) or a true-dual-port RAM.
          Els_Inst := Get_Net_Parent (Els);
+         if Get_Id (Els_Inst) = Id_Extract then
+            pragma Assert (Get_Param_Uns32 (Els_Inst, 0) = Off);
+            Els2 := Get_Input_Net (Els_Inst, 0);
+            Push_Extract (Ctxt, Els2, Off, Els_Inst, Get_Width (Els));
+            Els_Inst := Get_Net_Parent (Els2);
+         end if;
          if Get_Id (Els_Inst) = Id_Mux2 then
             Extract_Clock (Ctxt, Get_Driver (Get_Mux2_Sel (Els_Inst)),
                            Els_Clk, Els_En);
@@ -507,6 +550,11 @@ package body Netlists.Inference is
    --  Build the FF (or the RAM).
    --
    --  CLOCK_MUX is the mux whose input 0 is the loop and clock for selector.
+   --  It is the last mux of the chain.
+   --
+   --  VAL is the value to be assigned.
+   --  PREV_VAL is the output of the signal which is assigned but also the
+   --   value of the loop.  OFF is the offset in the signal.
    function Infere_FF (Ctxt : Context_Acc;
                        Val : Net;
                        Prev_Val : Net;
@@ -519,7 +567,6 @@ package body Netlists.Inference is
       O : constant Net := Get_Output (Clock_Mux, 0);
       Mux_Loc : constant Location_Type := Get_Location (Clock_Mux);
       W : constant Width := Get_Width (Val);
-      Loop_Off : Uns32;
       Data : Net;
       Res : Net;
       Sig : Instance;
@@ -534,8 +581,8 @@ package body Netlists.Inference is
    begin
       --  Create and return the DFF.
 
-      --  1. Remove the mux that creates the loop (will be replaced by the
-      --     dff).
+      --  1. Remove the mux CLOCK_MUX that creates the loop (will be
+      --     replaced by the dff).
       Infere_FF_Mux (Ctxt, Prev_Val, Off, W, Clock_Mux, Els, Data);
 
       --  If the signal declaration has an initial value, get it.
@@ -557,7 +604,6 @@ package body Netlists.Inference is
       --  mux.  In theory, there can be many set/reset with a defined order.
       Rst_Val := No_Net;
       Rst := No_Net;
-      Loop_Off := Off;
       declare
          Mux : Instance;
          Sel : Net;
@@ -567,7 +613,9 @@ package body Netlists.Inference is
          Mux_Rst_Val : Net;
          Prev_Input : Input;
          Snk : Input;
+         Loop_Off, Prev_Off : Uns32;
       begin
+         Loop_Off := Off;
          Prev_Mux := Clock_Mux;
 
          --  LAST_MUX is the last handled mux and LAST_OUT its output.
@@ -579,6 +627,8 @@ package body Netlists.Inference is
          while Last_Out /= Val loop
             Snk := Get_First_Sink (Last_Out);
 
+            --  Search for the right driver.
+            Prev_Off := Loop_Off;
             loop
                Mux := Get_Input_Parent (Snk);
                case Get_Id (Mux) is
@@ -599,6 +649,31 @@ package body Netlists.Inference is
                end case;
                Snk := Get_Next_Sink (Snk);
             end loop;
+
+            --  TODO: improve
+            --  Cannot immediately extract the right value (there are multiple
+            --  choices).
+            declare
+               Nxt_Snk : constant Input := Get_Next_Sink (Snk);
+               Nxt_Inst : Instance;
+               Eloc : Location_Type;
+            begin
+               if Nxt_Snk /= No_Input then
+                  Nxt_Inst := Get_Input_Parent (Nxt_Snk);
+                  loop
+                     if Get_Id (Nxt_Inst) /= Id_Extract then
+                        Eloc := Get_Location (Nxt_Inst);
+                     elsif Extract_Overlap (Nxt_Inst, Prev_Off, W) then
+                        Eloc := Loc;
+                     else
+                        exit;
+                     end if;
+                     Error_Msg_Netlist
+                       (Eloc, "intermediate value of the FF is read");
+                     exit;
+                  end loop;
+               end if;
+            end;
 
             --  Search for the 'right' driver.
             --  if not Has_One_Connection (Last_Out)
@@ -665,7 +740,11 @@ package body Netlists.Inference is
                end if;
 
                if Prev_Mux /= No_Instance then
-                  Remove_Instance (Prev_Mux);
+                  --  Clean up.
+                  if not Is_Connected (Get_Output (Prev_Mux, 0)) then
+                     --  But do not crash if the intermediate value is reused.
+                     Remove_Instance (Prev_Mux);
+                  end if;
                end if;
                Prev_Mux := Mux;
             else
@@ -681,7 +760,11 @@ package body Netlists.Inference is
 
                   --  Remove the last mux.  Will free this mux.
                   if Prev_Mux /= No_Instance then
-                     Remove_Instance (Prev_Mux);
+                     if not Is_Connected (Get_Output (Prev_Mux, 0)) then
+                        --  But do not crash if the intermediate value
+                        --  is reused.
+                        Remove_Instance (Prev_Mux);
+                     end if;
                   end if;
                   Prev_Mux := Mux;
                else
@@ -800,6 +883,19 @@ package body Netlists.Inference is
       return Res;
    end Is_False_Loop;
 
+   --  Return 1 if INP is connected to input 1 (i0),
+   --  return 2 if INP is connected to input 2 (i1).
+   function Get_Mux_Index (Mux : Instance; Inp : Net) return Port_Idx is
+   begin
+      if Get_Input_Net (Mux, 1) = Inp then
+         return 1;
+      else
+         pragma Assert (Get_Input_Net (Mux, 2) = Inp);
+         return 2;
+      end if;
+   end Get_Mux_Index;
+
+   --  Create a latch and merge all the mux2 above the last_mux.
    function Infere_Latch_Create (Ctxt : Context_Acc;
                                  Val : Net;
                                  Prev_Val : Net;
@@ -816,40 +912,40 @@ package body Netlists.Inference is
       Sel : Net;
       Res : Net;
    begin
-      --  Find which input of the last mux is creating the loop.
+      --  Disconnect the last mux.
+      --  The selection input will be part of the latch enable logic.
+      --  One of the input is the target, will the other is kept for latch
+      --  data input.
       Res_En := Disconnect_And_Get (Last_Mux, 0);
-      if Get_Input_Net (Last_Mux, 1) = Prev_Val then
-         --  Input on pin i1, normal.
-         Idx := 2;
-      else
-         --  Input on pin i0, inverted.
-         Idx := 1;
-         pragma Assert (Get_Input_Net (Last_Mux, 2) = Prev_Val);
+      Idx := Get_Mux_Index (Last_Mux, Prev_Val);
+      if Idx = 2 then
+         --  prev_val on pin i1, so data on pin i0, inverted.
          Res_En := Build_Monadic (Ctxt, Id_Not, Res_En);
          Set_Location (Res_En, Loc);
       end if;
-      Res_In := Disconnect_And_Get (Last_Mux, Idx);
-      Disconnect (Get_Input (Last_Mux, 1 + (2 - Idx)));
+      Res_In := Disconnect_And_Get (Last_Mux, 1 + (2 - Idx));
+      Disconnect (Get_Input (Last_Mux, Idx));
 
+      --  Build the latch control logic using the select input of the mux2
+      --  before the last one.
       Last := Last_Mux;
       Last_Out := Get_Output (Last, 0);
       Is_First := True;
 
       while Last_Out /= Val loop
+         --  Get the previous mux2
          Pinp := Get_First_Sink (Last_Out);
          pragma Assert (Pinp /= No_Input);
          pragma Assert (Get_Next_Sink (Pinp) = No_Input);
          Last := Get_Input_Parent (Pinp);
          pragma Assert (Get_Id (Last) = Id_Mux2);
+
          Sel := Get_Input_Net (Last, 0);
-         if Get_Input_Net (Last, 2) = Last_Out then
+         Idx := Get_Mux_Index (Last, Last_Out);
+         if Idx = 2 then
             --  Inverted
             Sel := Build_Monadic (Ctxt, Id_Not, Sel);
             Set_Location (Sel, Loc);
-            Idx := 2;
-         else
-            pragma Assert (Get_Input_Net (Last, 1) = Last_Out);
-            Idx := 1;
          end if;
          Res_En := Build_Dyadic (Ctxt, Id_Or, Res_En, Sel);
          Set_Location (Res_En, Loc);
@@ -872,6 +968,63 @@ package body Netlists.Inference is
       return Res;
    end Infere_Latch_Create;
 
+   --  Return a name for PREV_VAL (the target).
+   function Get_Prev_Val_Name (Prev_Val : Net) return Sname
+   is
+      Name : Sname;
+   begin
+      if Get_Id (Get_Net_Parent (Prev_Val)) = Id_Output then
+         --  Outputs are connected to a port.  The port is the first
+         --  connection made, so it is the last sink.  Be  more tolerant and
+         --  look for the (only) port connected to the output.
+         declare
+            Inp : Input;
+            Inst : Instance;
+         begin
+            Inp := Get_First_Sink (Prev_Val);
+            loop
+               pragma Assert (Inp /= No_Input);
+               Inst := Get_Input_Parent (Inp);
+               if Get_Id (Inst) >= Id_User_None then
+                  Name := Get_Output_Desc (Get_Module (Inst),
+                                           Get_Port_Idx (Inp)).Name;
+                  exit;
+               end if;
+               Inp := Get_Next_Sink (Inp);
+            end loop;
+         end;
+      else
+         Name := Get_Instance_Name (Get_Net_Parent (Prev_Val));
+      end if;
+
+      return Name;
+   end Get_Prev_Val_Name;
+
+   function Is_Mux2_Chain (Last_Mux : Instance; Val : Net) return Boolean
+   is
+      Last : Instance;
+      Last_Out : Net;
+      Pinp : Input;
+   begin
+      Last := Last_Mux;
+
+      loop
+         Last_Out := Get_Output (Last, 0);
+         exit when Last_Out = Val;
+
+         --  Get the previous mux2
+         Pinp := Get_First_Sink (Last_Out);
+         pragma Assert (Pinp /= No_Input);
+         if Get_Next_Sink (Pinp) /= No_Input then
+            return False;
+         end if;
+         Last := Get_Input_Parent (Pinp);
+         pragma Assert (Get_Id (Last) = Id_Mux2);
+      end loop;
+
+      return True;
+   end Is_Mux2_Chain;
+
    function Infere_Latch (Ctxt : Context_Acc;
                           Val : Net;
                           Prev_Val : Net;
@@ -879,6 +1032,7 @@ package body Netlists.Inference is
                           Last_Use : Boolean;
                           Loc : Location_Type) return Net
    is
+      use Errorout;
       Name : Sname;
    begin
       --  In case of false loop, do not close the loop but assign X.
@@ -886,32 +1040,19 @@ package body Netlists.Inference is
          return Build_Const_X (Ctxt, Get_Width (Val));
       end if;
 
-      --  Latch or combinational loop.
-      if not Flag_Latches then
-         if Get_Id (Get_Net_Parent (Prev_Val)) = Id_Output then
-            --  Outputs are connected to a port.  The port is the first
-            --  connection made, so it is the last sink.  Be  more tolerant and
-            --  look for the (only) port connected to the output.
-            declare
-               Inp : Input;
-               Inst : Instance;
-            begin
-               Inp := Get_First_Sink (Prev_Val);
-               loop
-                  pragma Assert (Inp /= No_Input);
-                  Inst := Get_Input_Parent (Inp);
-                  if Get_Id (Inst) >= Id_User_None then
-                     Name := Get_Output_Desc (Get_Module (Inst),
-                                              Get_Port_Idx (Inp)).Name;
-                     exit;
-                  end if;
-                  Inp := Get_Next_Sink (Inp);
-               end loop;
-            end;
-         else
-            Name := Get_Instance_Name (Get_Net_Parent (Prev_Val));
-         end if;
+      --  As the mux2 are modified, they should form a simple chain
+      --  (the output of a mux2 is only connected to an input of the mux2
+      --  before it).
+      if not Is_Mux2_Chain (Last_Mux, Val) then
+         Name := Get_Prev_Val_Name (Prev_Val);
+         Warning_Msg_Netlist (Warnid_Logic_Loop, Loc,
+                              "logical loop for net %n", (1 => +Name));
+         return Val;
+      end if;
 
+      --  Latch.
+      if not Flag_Latches then
+         Name := Get_Prev_Val_Name (Prev_Val);
          Error_Msg_Netlist
            (Loc, "latch infered for net %n (use --latches)", (1 => +Name));
       end if;
@@ -935,6 +1076,7 @@ package body Netlists.Inference is
       Sel : Input;
       Clk : Net;
       Enable : Net;
+      Val2 : Net;
       Res : Net;
    begin
       if Get_First_Sink (Prev_Val) = No_Input then
@@ -969,11 +1111,6 @@ package body Netlists.Inference is
          end;
       end if;
 
-      Find_Longest_Loop (Val, Prev_Val, Off, Last_Mux, Len);
-      if Len <= 0 then
-         --  No logical loop or self assignment.
-         return Val;
-      end if;
       if Last_Use
         and then Has_One_Connection (Prev_Val)
         and then not Is_Connected (Val)
@@ -987,18 +1124,48 @@ package body Netlists.Inference is
          return Val;
       end if;
 
+      if not Flag_Latches and then Get_Id (First_Mux) = Id_Pmux then
+         if not Is_False_Loop (Prev_Val) then
+            for I in 1 .. Get_Nbr_Inputs (First_Mux) - 1 loop
+               if Get_Input_Net (First_Mux, I) = Prev_Val then
+                  Error_Msg_Netlist
+                    (Loc, "latch infered for net %n (use --latches)",
+                    (1 => +Get_Prev_Val_Name (Prev_Val)));
+               end if;
+            end loop;
+         end if;
+         return Val;
+      end if;
+
+      Find_Longest_Loop (Val, Prev_Val, Off, Last_Mux, Len);
+      if Len <= 0 then
+         --  No logical loop or self assignment.
+         return Val;
+      end if;
+
+      First_Mux := Get_Net_Parent (Val);
+      if Get_Id (First_Mux) = Id_Extract then
+         pragma Assert (Get_Param_Uns32 (First_Mux, 0) = Off);
+         Val2 := Get_Input_Net (First_Mux, 0);
+         Push_Extract (Ctxt, Val2, Off, Last_Mux, Get_Width (Val));
+      else
+         Val2 := Val;
+      end if;
+
+      pragma Unreferenced (Val);
+
       --  So there is a logical loop.
       Sel := Get_Mux2_Sel (Last_Mux);
       Extract_Clock (Ctxt, Get_Driver (Sel), Clk, Enable);
       if Clk = No_Net then
          --  No clock -> latch or combinational loop
-         Res := Infere_Latch (Ctxt, Val, Prev_Val, Last_Mux, Last_Use, Loc);
+         Res := Infere_Latch (Ctxt, Val2, Prev_Val, Last_Mux, Last_Use, Loc);
       else
          --  Clock -> FF
-         First_Mux := Get_Net_Parent (Val);
+         First_Mux := Get_Net_Parent (Val2);
          pragma Assert (Get_Id (First_Mux) = Id_Mux2);
 
-         Res := Infere_FF (Ctxt, Val, Prev_Val, Off, Last_Mux,
+         Res := Infere_FF (Ctxt, Val2, Prev_Val, Off, Last_Mux,
                            Clk, Enable, Loc);
       end if;
 

@@ -46,14 +46,36 @@ package body Vhdl.Sem_Specs is
             return Tok_Architecture;
          when Iir_Kind_Configuration_Declaration =>
             return Tok_Configuration;
-         when Iir_Kind_Package_Declaration =>
+         when Iir_Kind_Package_Declaration
+            | Iir_Kind_Interface_Package_Declaration =>
             return Tok_Package;
          when Iir_Kind_Procedure_Declaration =>
             return Tok_Procedure;
          when Iir_Kind_Function_Declaration =>
             return Tok_Function;
          when Iir_Kind_Type_Declaration =>
-            return Tok_Type;
+            --  For vhdl08 and later, if an array or record is not fully
+            --  unconstrained, the type is anonymous and a subtype is
+            --  implicitely created.
+            if Vhdl_Std < Vhdl_08 then
+               return Tok_Type;
+            end if;
+            declare
+               Atype : constant Iir := Get_Type (Decl);
+            begin
+               case Get_Kind (Atype) is
+                  when Iir_Kind_Record_Type_Definition
+                    | Iir_Kind_Array_Type_Definition =>
+                     null;
+                  when others =>
+                     return Tok_Type;
+               end case;
+               if Get_Constraint_State (Atype) = Unconstrained then
+                  return Tok_Type;
+               else
+                  return Tok_Subtype;
+               end if;
+            end;
          when Iir_Kind_Subtype_Declaration =>
             return Tok_Subtype;
          when Iir_Kind_Constant_Declaration
@@ -94,10 +116,11 @@ package body Vhdl.Sem_Specs is
             --  Because an attribute declaration can appear in a declaration
             --  region.
             return Tok_Attribute;
+         when Iir_Kind_Mode_View_Declaration =>
+            return Tok_View;
          when others =>
             Error_Kind ("get_entity_class_kind", Decl);
       end case;
-      return Tok_Invalid;
    end Get_Entity_Class_Kind;
 
    --  Return the node containing the attribute_value_chain field for DECL.
@@ -242,6 +265,8 @@ package body Vhdl.Sem_Specs is
       Attr_Decl : Iir;
 
       Attr_Chain_Parent : Iir;
+
+      Is_Anon_Type : Boolean;
    begin
       --  LRM93 5.1
       --  It is an error if the class of those names is not the same as that
@@ -249,26 +274,40 @@ package body Vhdl.Sem_Specs is
       if Attr_Class /= Tok_Invalid
         and then Get_Entity_Class_Kind (Decl) /= Attr_Class
       then
-         if Check_Class then
+         if not Check_Class then
+            return;
+         end if;
+
+         --  If -frelaxed, specifying an attribute of class 'type' to
+         --  an anonynous type declaration is allowed.
+         Is_Anon_Type :=
+           (Get_Kind (Decl) = Iir_Kind_Subtype_Declaration
+              or else Get_Kind (Decl) = Iir_Kind_Type_Declaration)
+           and then Attr_Class = Tok_Type;
+
+         if Is_Anon_Type then
+            --  The type declaration declares an anonymous type
+            --  and a named subtype.
+            Report_Start_Group;
+            Error_Msg_Sem_Relaxed
+              (Attr, Warnid_Specs,
+               "%n is not of class %t", (+Decl, +Attr_Class));
+            Error_Msg_Sem_Relaxed
+              (Decl, Warnid_Specs,
+               "%i declares both an anonymous type and a named subtype",
+               (1 => +Decl));
+            Report_End_Group;
+
+            --  If -frelaxed, this is not an error and the named entity is
+            --  specified with the attribute.
+            if not Flag_Relaxed_Rules then
+               return;
+            end if;
+         else
             Error_Msg_Sem
               (+Attr, "%n is not of class %t", (+Decl, +Attr_Class));
-            if Get_Kind (Decl) = Iir_Kind_Subtype_Declaration
-              and then Get_Entity_Class (Attr) = Tok_Type
-              and then Get_Type (Decl) /= Null_Iir
-              and then Get_Base_Type (Get_Type (Decl)) /= Null_Iir
-              and then Get_Kind
-              (Get_Type_Declarator (Get_Base_Type (Get_Type (Decl))))
-              = Iir_Kind_Anonymous_Type_Declaration
-            then
-               --  The type declaration declares an anonymous type
-               --  and a named subtype.
-               Error_Msg_Sem
-                 (+Decl,
-                  "%i declares both an anonymous type and a named subtype",
-                  +Decl);
-            end if;
+            return;
          end if;
-         return;
       end if;
 
       --  LRM93 5.1
@@ -276,16 +315,23 @@ package body Vhdl.Sem_Specs is
       --  (ie an entity declaration, an architecture, a configuration, or a
       --  package) must appear immediately within the declarative part of
       --  that design unit.
-      case Get_Entity_Class (Attr) is
-         when Tok_Entity
-           | Tok_Architecture
-           | Tok_Configuration
-           | Tok_Package =>
-            if Get_Design_Unit (Decl) /= Get_Current_Design_Unit then
-               Error_Msg_Sem (+Attr, "%n must appear immediatly within %n",
-                              (+Attr, +Decl));
-               return;
-            end if;
+      case Get_Kind (Decl) is
+         when Iir_Kind_Entity_Declaration
+           | Iir_Kind_Architecture_Body
+           | Iir_Kind_Configuration_Declaration
+           | Iir_Kind_Package_Declaration =>
+            declare
+               Parent : constant Iir := Get_Parent (Decl);
+            begin
+               --  Note: a package can be a nested package.
+               if Get_Kind (Parent) = Iir_Kind_Design_Unit
+                 and then Parent /= Get_Current_Design_Unit
+               then
+                  Error_Msg_Sem (+Attr, "%n must appear immediatly within %n",
+                                 (+Attr, +Decl));
+                  return;
+               end if;
+            end;
          when others =>
             null;
       end case;
@@ -473,11 +519,14 @@ package body Vhdl.Sem_Specs is
               | Iir_Kinds_Non_Alias_Object_Declaration
               | Iir_Kind_Type_Declaration
               | Iir_Kind_Subtype_Declaration
+              | Iir_Kind_Interface_Type_Declaration
+              | Iir_Kind_Interface_Package_Declaration
               | Iir_Kind_Component_Declaration
               | Iir_Kind_Enumeration_Literal
               | Iir_Kind_Unit_Declaration
               | Iir_Kind_Group_Template_Declaration
-              | Iir_Kind_Group_Declaration =>
+              | Iir_Kind_Group_Declaration
+              | Iir_Kind_Mode_View_Declaration =>
                Res := Res or Sem_Named_Entity1 (Ent, Ent);
             when Iir_Kind_Function_Declaration
               | Iir_Kind_Procedure_Declaration =>
@@ -519,7 +568,8 @@ package body Vhdl.Sem_Specs is
                null;
             when Iir_Kind_Protected_Type_Body =>
                null;
-            when Iir_Kind_Psl_Default_Clock =>
+            when Iir_Kind_Psl_Default_Clock
+               | Iir_Kind_Psl_Declaration =>
                null;
             when others =>
                Error_Kind ("sem_named_entity", Ent);
@@ -658,6 +708,14 @@ package body Vhdl.Sem_Specs is
             when Iir_Kind_Entity_Declaration =>
                Sem_Named_Entity_Chain (Get_Generic_Chain (Scope));
                Sem_Named_Entity_Chain (Get_Port_Chain (Scope));
+            when Iir_Kind_Package_Declaration =>
+               declare
+                  Header : constant Iir := Get_Package_Header (Scope);
+               begin
+                  if Header /= Null_Iir then
+                     Sem_Named_Entity_Chain (Get_Generic_Chain (Header));
+                  end if;
+               end;
             when Iir_Kind_Block_Statement =>
                declare
                   Header : constant Iir := Get_Block_Header (Scope);
@@ -1929,17 +1987,16 @@ package body Vhdl.Sem_Specs is
       Found : Natural;
       Comp_Chain : Iir;
       Ent_Chain : Iir;
+      Inter_Kind : Iir_Kinds_Interface_Declaration;
       Assoc_Kind : Iir_Kind;
    begin
       case Kind is
          when Map_Generic =>
             Ent_Chain := Get_Generic_Chain (Entity);
             Comp_Chain := Get_Generic_Chain (Comp);
-            Assoc_Kind := Iir_Kind_Association_Element_By_Expression;
          when Map_Port =>
             Ent_Chain := Get_Port_Chain (Entity);
             Comp_Chain := Get_Port_Chain (Comp);
-            Assoc_Kind := Iir_Kind_Association_Element_By_Name;
       end case;
 
       --  No error found yet.
@@ -1950,70 +2007,129 @@ package body Vhdl.Sem_Specs is
       Ent_El := Ent_Chain;
       while Ent_El /= Null_Iir loop
          --  Find the component generic/port with the same name.
+         Inter_Kind := Get_Kind (Ent_El);
          Comp_El := Find_Name_In_Chain (Comp_Chain, Get_Identifier (Ent_El));
-         if Comp_El = Null_Iir then
-            Assoc := Create_Iir (Iir_Kind_Association_Element_Open);
-            Location_Copy (Assoc, Parent);
-         else
-            if Are_Nodes_Compatible (Ent_El, Comp_El) = Not_Compatible then
-               Report_Start_Group;
-               Error_Header;
-               Error_Msg_Sem
-                 (+Parent, "type of %n declared at %l", (+Comp_El, +Comp_El));
-               Error_Msg_Sem
-                 (+Parent, "not compatible with type of %n declared at %l",
-                  (+Ent_El, +Ent_El));
-               Report_End_Group;
-            elsif Kind = Map_Port
-              and then not Check_Port_Association_Mode_Restrictions
-              (Ent_El, Comp_El, Null_Iir)
-            then
-               Report_Start_Group;
-               Error_Header;
-               Error_Msg_Sem (+Parent, "cannot associate "
-                                & Get_Mode_Name (Get_Mode (Ent_El))
-                                & " %n declared at %l",
-                              (+Ent_El, +Ent_El));
-               Error_Msg_Sem (+Parent, "with actual port of mode "
-                                & Get_Mode_Name (Get_Mode (Comp_El))
-                                & " declared at %l", +Comp_El);
-               Report_End_Group;
-            end if;
+         Assoc_Kind := Iir_Kind_Error;
+         case Inter_Kind is
+            when Iir_Kind_Interface_Type_Declaration =>
+               if Comp_El = Null_Iir then
+                  Report_Start_Group;
+                  Error_Header;
+                  Error_Msg_Sem (+Parent, "no association for %n", +Ent_El);
+                  Report_End_Group;
+               elsif Get_Kind (Comp_El) /= Iir_Kind_Interface_Type_Declaration
+               then
+                  Report_Start_Group;
+                  Error_Header;
+                  Error_Msg_Sem (+Parent, "incorrect association for %n",
+                                 +Ent_El);
+                  Report_End_Group;
+               else
+                  Assoc_Kind := Iir_Kind_Association_Element_Type;
+               end if;
+            when Iir_Kind_Interface_Signal_Declaration
+              | Iir_Kind_Interface_Constant_Declaration =>
+               if Comp_El = Null_Iir then
+                  Assoc_Kind := Iir_Kind_Association_Element_Open;
+               elsif Are_Nodes_Compatible (Ent_El, Comp_El) = Not_Compatible
+               then
+                  Report_Start_Group;
+                  Error_Header;
+                  Error_Msg_Sem
+                    (+Parent, "type of %n declared at %l",
+                     (+Comp_El, +Comp_El));
+                  Error_Msg_Sem
+                    (+Parent, "not compatible with type of %n declared at %l",
+                     (+Ent_El, +Ent_El));
+                  Report_End_Group;
+               elsif Kind = Map_Port
+                 and then not Check_Port_Association_Mode_Restrictions
+                 (Ent_El, Comp_El, Null_Iir)
+               then
+                  Report_Start_Group;
+                  Error_Header;
+                  Error_Msg_Sem (+Parent, "cannot associate "
+                                   & Get_Mode_Name (Get_Mode (Ent_El))
+                                   & " %n declared at %l",
+                                 (+Ent_El, +Ent_El));
+                  Error_Msg_Sem (+Parent, "with actual port of mode "
+                                   & Get_Mode_Name (Get_Mode (Comp_El))
+                                   & " declared at %l", +Comp_El);
+                  Report_End_Group;
+               else
+                  if Inter_Kind = Iir_Kind_Interface_Signal_Declaration then
+                     Assoc_Kind := Iir_Kind_Association_Element_By_Name;
+                  else
+                     Assoc_Kind := Iir_Kind_Association_Element_By_Expression;
+                  end if;
+               end if;
+            when Iir_Kind_Interface_Variable_Declaration
+              | Iir_Kind_Interface_File_Declaration =>
+               raise Internal_Error;
+            when Iir_Kind_Interface_View_Declaration =>
+               --  TODO
+               raise Internal_Error;
+            when Iir_Kind_Interface_Quantity_Declaration
+              | Iir_Kind_Interface_Terminal_Declaration =>
+               --  TODO
+               raise Internal_Error;
+            when Iir_Kind_Interface_Package_Declaration =>
+               if Comp_El = Null_Iir then
+                  --  TODO: check if default
+                  Assoc_Kind := Iir_Kind_Association_Element_Open;
+               else
+                  --  TODO: check if they are compatible.
+                  Assoc_Kind := Iir_Kind_Association_Element_Package;
+               end if;
+            when Iir_Kinds_Interface_Subprogram_Declaration =>
+               --  TODO
+               raise Internal_Error;
+         end case;
 
+         if Assoc_Kind /= Iir_Kind_Error then
             Assoc := Create_Iir (Assoc_Kind);
             Location_Copy (Assoc, Parent);
-            Name := Build_Simple_Name (Comp_El, Comp_El);
-            Set_Type (Name, Get_Type (Comp_El));
-            Set_Actual (Assoc, Name);
-            if Kind = Map_Port and then not Error then
+            Set_Whole_Association_Flag (Assoc, True);
+
+            --  The actual.
+            if Assoc_Kind /= Iir_Kind_Association_Element_Open then
+               Name := Build_Simple_Name (Comp_El, Comp_El);
+               Set_Type (Name, Get_Type (Comp_El));
+               Set_Actual (Assoc, Name);
+               Found := Found + 1;
+            end if;
+            if Assoc_Kind = Iir_Kind_Association_Element_Type then
+               Set_Actual_Type (Assoc,
+                                Get_Associated_Type
+                                  (Get_Interface_Type_Definition (Comp_El)));
+            end if;
+
+            --  Create the formal name.  This is a forward reference as the
+            --  current design unit does not depend on the entity.
+            Name := Build_Simple_Name (Ent_El, Ent_El);
+            Set_Is_Forward_Ref (Name, True);
+            Set_Formal (Assoc, Name);
+
+            if Inter_Kind in Iir_Kinds_Interface_Object_Declaration then
+               --  Do not set the type of the formal, as it can be a forward
+               --  reference.  This is a little bit unusual to not have type.
+               --  Set_Type (Name, Get_Type (Ent_El));
+               null;
+            end if;
+
+            if Inter_Kind = Iir_Kind_Interface_Signal_Declaration
+              and then Assoc_Kind /= Iir_Kind_Association_Element_Open
+              and then not Error
+            then
                Check_Port_Association_Bounds_Restrictions
                  (Ent_El, Comp_El, Assoc);
+               Set_Collapse_Signal_Flag
+                 (Assoc, Can_Collapse_Signals (Assoc, Ent_El));
             end if;
-            Found := Found + 1;
-         end if;
-         Set_Whole_Association_Flag (Assoc, True);
 
-         --  Create the formal name.  This is a forward reference as the
-         --  current design unit does not depend on the entity.
-         Name := Build_Simple_Name (Ent_El, Ent_El);
-         Set_Is_Forward_Ref (Name, True);
-         Set_Formal (Assoc, Name);
-
-         if Get_Kind (Ent_El) in Iir_Kinds_Interface_Object_Declaration then
-            --  Do not set the type of the formal, as it can be a forward
-            --  reference.  This is a little bit unusual to not have type.
-            --  Set_Type (Name, Get_Type (Ent_El));
-            null;
+            Chain_Append (Res, Last, Assoc);
          end if;
 
-         if Kind = Map_Port
-           and then not Error
-           and then Comp_El /= Null_Iir
-         then
-            Set_Collapse_Signal_Flag
-              (Assoc, Can_Collapse_Signals (Assoc, Ent_El));
-         end if;
-         Chain_Append (Res, Last, Assoc);
          Ent_El := Get_Chain (Ent_El);
       end loop;
       if Nodes_Utils.Get_Chain_Length (Comp_Chain) /= Found then
@@ -2033,6 +2149,7 @@ package body Vhdl.Sem_Specs is
          end loop;
       end if;
       if Error then
+         --  TODO: free RES chain
          return Null_Iir;
       else
          return Res;

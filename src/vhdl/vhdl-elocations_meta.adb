@@ -184,6 +184,7 @@ package body Vhdl.Elocations_Meta is
            | Iir_Kind_Interface_Constant_Declaration
            | Iir_Kind_Interface_Variable_Declaration
            | Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration
            | Iir_Kind_Interface_File_Declaration
            | Iir_Kind_Interface_Quantity_Declaration
            | Iir_Kind_Interface_Terminal_Declaration
@@ -194,6 +195,7 @@ package body Vhdl.Elocations_Meta is
            | Iir_Kind_Concurrent_Simple_Signal_Assignment
            | Iir_Kind_Concurrent_Conditional_Signal_Assignment
            | Iir_Kind_Concurrent_Selected_Signal_Assignment
+           | Iir_Kind_Block_Statement
            | Iir_Kind_If_Generate_Statement
            | Iir_Kind_For_Generate_Statement
            | Iir_Kind_Generate_Statement_Body
@@ -231,6 +233,7 @@ package body Vhdl.Elocations_Meta is
            | Iir_Kind_Package_Body
            | Iir_Kind_Architecture_Body
            | Iir_Kind_Component_Declaration
+           | Iir_Kind_Mode_View_Declaration
            | Iir_Kind_Function_Body
            | Iir_Kind_Procedure_Body
            | Iir_Kind_Sensitized_Process_Statement
@@ -262,6 +265,7 @@ package body Vhdl.Elocations_Meta is
            | Iir_Kind_Architecture_Body
            | Iir_Kind_Type_Declaration
            | Iir_Kind_Subtype_Declaration
+           | Iir_Kind_Mode_View_Declaration
            | Iir_Kind_Function_Body
            | Iir_Kind_Procedure_Body
            | Iir_Kind_Sensitized_Process_Statement
@@ -409,6 +413,7 @@ package body Vhdl.Elocations_Meta is
          when Iir_Kind_Interface_Constant_Declaration
            | Iir_Kind_Interface_Variable_Declaration
            | Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration
            | Iir_Kind_Interface_File_Declaration
            | Iir_Kind_Interface_Quantity_Declaration =>
             return True;
@@ -423,6 +428,7 @@ package body Vhdl.Elocations_Meta is
          when Iir_Kind_Interface_Constant_Declaration
            | Iir_Kind_Interface_Variable_Declaration
            | Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration
            | Iir_Kind_Interface_File_Declaration
            | Iir_Kind_Interface_Quantity_Declaration =>
             return True;

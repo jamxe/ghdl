@@ -19,6 +19,7 @@ with Flags; use Flags;
 with Types; use Types;
 with Errorout; use Errorout;
 with Name_Table; -- use Name_Table;
+with Std_Names;
 with Files_Map;
 with Libraries;
 with Simple_IO;
@@ -27,6 +28,7 @@ with Vhdl.Utils; use Vhdl.Utils;
 with Vhdl.Std_Package; use Vhdl.Std_Package;
 with Vhdl.Errors; use Vhdl.Errors;
 with Vhdl.Canon;
+with Vhdl.Sem_Inst;
 
 with Ortho_Nodes; use Ortho_Nodes;
 with Ortho_Ident; use Ortho_Ident;
@@ -41,6 +43,7 @@ with Trans.Chap7;
 with Trans.Chap12;
 with Trans.Rtis;
 with Trans.Helpers2;
+with Trans.Coverage;
 
 package body Translation is
    use Trans;
@@ -80,75 +83,98 @@ package body Translation is
       Current_Filename_Node := Info.Design_Filename;
    end Gen_Filename;
 
-   --  Decorate the tree in order to be usable with the internal simulator.
-   procedure Translate (Unit : Iir_Design_Unit; Main : Boolean)
+   procedure Push_Unit_Prefix (Lib_Unit : Iir; Mark : out Id_Mark_Type)
    is
-      Design_File : constant Iir_Design_File := Get_Design_File (Unit);
-      Lib_Unit : constant Iir := Get_Library_Unit (Unit);
-      Lib : Iir_Library_Declaration;
-      Lib_Mark, Ent_Mark, Sep_Mark, Unit_Mark : Id_Mark_Type;
+      Unit : Iir;
+      Design_File : Iir_Design_File;
+      Lib : Iir;
+      Mark2 : Id_Mark_Type;
       Id : Name_Id;
    begin
-      Update_Node_Infos;
-
-      if False then
-         --  No translation for context items.
-         declare
-            El : Iir;
-         begin
-            El := Get_Context_Items (Unit);
-            while El /= Null_Iir loop
-               case Get_Kind (El) is
-                  when Iir_Kind_Use_Clause =>
-                     null;
-                  when Iir_Kind_Library_Clause =>
-                     null;
-                  when others =>
-                     Error_Kind ("translate1", El);
-               end case;
-               El := Get_Chain (El);
-            end loop;
-         end;
+      Unit := Get_Design_Unit (Lib_Unit);
+      if Unit = Null_Iir
+        or else Get_Kind (Unit) = Iir_Kind_Component_Instantiation_Statement
+      then
+         Unit := Get_Design_Unit (Vhdl.Sem_Inst.Get_Origin (Lib_Unit));
       end if;
 
-      if Flags.Verbose then
-         if Main then
-            Report_Msg (Msgid_Note, Semantic, +Unit,
-                        "translating (with code generation) %n",
-                        (1 => +Lib_Unit));
-         else
-            Report_Msg (Msgid_Note, Semantic, +Unit,
-                        "translating %n", (1 => +Lib_Unit));
-         end if;
-      end if;
+      Design_File := Get_Design_File (Unit);
+      Lib  := Get_Library (Design_File);
 
       --  Create the prefix for identifiers.
-      Lib := Get_Library (Get_Design_File (Unit));
       Reset_Identifier_Prefix;
       if Lib = Libraries.Work_Library then
          Id := Libraries.Work_Library_Name;
       else
          Id := Get_Identifier (Lib);
       end if;
-      Push_Identifier_Prefix (Lib_Mark, Id);
+      Push_Identifier_Prefix (Mark, Id);
 
       if Get_Kind (Lib_Unit) = Iir_Kind_Architecture_Body then
          --  Put 'ARCH' between the entity name and the architecture name, to
          --  avoid a name clash with names from entity (eg an entity port with
          --  the same name as an architecture).
-         Push_Identifier_Prefix (Ent_Mark,
-                                 Get_Identifier (Get_Entity (Lib_Unit)));
-         Push_Identifier_Prefix (Sep_Mark, "ARCH");
+         Push_Identifier_Prefix
+           (Mark2, Get_Identifier (Get_Entity (Lib_Unit)));
+         Push_Identifier_Prefix (Mark2, "ARCH");
       end if;
       Id := Get_Identifier (Lib_Unit);
       if Id /= Null_Identifier then
-         Push_Identifier_Prefix (Unit_Mark, Id);
+         Push_Identifier_Prefix (Mark2, Id);
+      end if;
+   end Push_Unit_Prefix;
+
+   --  Decorate the tree in order to be usable with the internal simulator.
+   procedure Translate (Lib_Unit : Iir; Main : Boolean)
+   is
+      Parent : constant Iir := Get_Design_Unit (Lib_Unit);
+      Prev_Coverage_On : constant Boolean := Trans.Coverage.Coverage_On;
+      Design_File : Iir_Design_File;
+      Lib : Iir;
+      Mark : Id_Mark_Type;
+   begin
+      Update_Node_Infos;
+
+      if Flags.Verbose then
+         if Main then
+            Report_Msg (Msgid_Note, Semantic, +Lib_Unit,
+                        "translating (with code generation) %n",
+                        (1 => +Lib_Unit));
+         else
+            Report_Msg (Msgid_Note, Semantic, +Lib_Unit,
+                        "translating %n", (1 => +Lib_Unit));
+         end if;
+      end if;
+
+      --  Create the prefix for identifiers.
+      Push_Unit_Prefix (Lib_Unit, Mark);
+
+      declare
+         Design_Unit : Iir_Design_Unit;
+      begin
+         Design_Unit := Get_Design_Unit (Lib_Unit);
+         if Design_Unit = Null_Iir
+           or else
+           Get_Kind (Design_Unit) = Iir_Kind_Component_Instantiation_Statement
+         then
+            Design_Unit := Get_Design_Unit
+              (Vhdl.Sem_Inst.Get_Origin (Lib_Unit));
+         end if;
+         Design_File := Get_Design_File (Design_Unit);
+      end;
+
+      --  Do not enable coverage for ieee and std units.
+      Lib := Get_Library (Design_File);
+      if Get_Identifier (Lib) = Std_Names.Name_Ieee
+        or else Get_Identifier (Lib) = Std_Names.Name_Std
+      then
+         Trans.Coverage.Coverage_On := False;
       end if;
 
       if Main then
          Set_Global_Storage (O_Storage_Public);
          --  Create the variable containing the current file name.
-         Gen_Filename (Get_Design_File (Unit));
+         Gen_Filename (Design_File);
       else
          Set_Global_Storage (O_Storage_External);
       end if;
@@ -177,16 +203,33 @@ package body Translation is
               ("package instantiation " & Image_Identifier (Lib_Unit));
             Chap2.Translate_Package_Instantiation_Declaration_Unit (Lib_Unit);
          when Iir_Kind_Entity_Declaration =>
-            New_Debug_Comment_Decl ("entity " & Image_Identifier (Lib_Unit));
-            Chap1.Translate_Entity_Declaration (Lib_Unit);
+            if not Get_Macro_Expand_Flag (Lib_Unit)
+              or else (Get_Kind (Parent)
+                         = Iir_Kind_Component_Instantiation_Statement)
+            then
+               New_Debug_Comment_Decl
+                 ("entity " & Image_Identifier (Lib_Unit));
+               Chap1.Translate_Entity_Declaration (Lib_Unit, Null_Iir);
+               Chap1.Translate_Entity_Subprograms (Lib_Unit);
+            end if;
          when Iir_Kind_Architecture_Body =>
-            New_Debug_Comment_Decl
-              ("architecture " & Image_Identifier (Lib_Unit));
-            Chap1.Translate_Architecture_Body (Lib_Unit);
+            declare
+               Ent : constant Iir := Get_Entity (Lib_Unit);
+               Ent_Parent : constant Iir := Get_Parent (Ent);
+            begin
+               if not Get_Macro_Expand_Flag (Ent)
+                 or else (Get_Kind (Ent_Parent)
+                            = Iir_Kind_Component_Instantiation_Statement)
+               then
+                  New_Debug_Comment_Decl
+                    ("architecture " & Image_Identifier (Lib_Unit));
+                  Chap1.Translate_Architecture_Body (Lib_Unit);
+               end if;
+            end;
          when Iir_Kind_Configuration_Declaration =>
             New_Debug_Comment_Decl
               ("configuration " & Image_Identifier (Lib_Unit));
-            if Id = Null_Identifier then
+            if Get_Identifier (Lib_Unit) = Null_Identifier then
                --  Default configuration.
                declare
                   Mark : Id_Mark_Type;
@@ -226,14 +269,9 @@ package body Translation is
       Current_Filename_Node := O_Dnode_Null;
       Current_Library_Unit := Null_Iir;
 
-      if Id /= Null_Identifier then
-         Pop_Identifier_Prefix (Unit_Mark);
-      end if;
-      if Get_Kind (Lib_Unit) = Iir_Kind_Architecture_Body then
-         Pop_Identifier_Prefix (Sep_Mark);
-         Pop_Identifier_Prefix (Ent_Mark);
-      end if;
-      Pop_Identifier_Prefix (Lib_Mark);
+      Trans.Coverage.Coverage_On := Prev_Coverage_On;
+
+      Pop_Identifier_Prefix (Mark);
    end Translate;
 
    procedure Initialize
@@ -546,6 +584,14 @@ package body Translation is
       New_Interface_Decl (Interfaces, Param, Wki_Length, Ghdl_Index_Type);
       Finish_Subprogram_Decl (Interfaces, Ghdl_Memcpy);
 
+      -- function __ghdl_allocate (length : ghdl_index_type)
+      --    return ghdl_ptr_type;
+      Start_Function_Decl
+        (Interfaces, Get_Identifier ("__ghdl_allocate"), O_Storage_External,
+         Ghdl_Ptr_Type);
+      New_Interface_Decl (Interfaces, Param, Wki_Length, Ghdl_Index_Type);
+      Finish_Subprogram_Decl (Interfaces, Ghdl_Allocate);
+
       --  procedure __ghdl_deallocate (ptr : ghdl_ptr_type);
       Start_Procedure_Decl
         (Interfaces, Get_Identifier ("__ghdl_deallocate"), O_Storage_External);
@@ -567,6 +613,12 @@ package body Translation is
          Ghdl_Ptr_Type);
       New_Interface_Decl (Interfaces, Param, Wki_Length, Ghdl_Index_Type);
       Finish_Subprogram_Decl (Interfaces, Ghdl_Malloc0);
+
+      --  procedure __ghdl_free_mem (ptr : ghdl_ptr_type);
+      Start_Procedure_Decl
+        (Interfaces, Get_Identifier ("__ghdl_free_mem"), O_Storage_External);
+      New_Interface_Decl (Interfaces, Param, Wki_Obj, Ghdl_Ptr_Type);
+      Finish_Subprogram_Decl (Interfaces, Ghdl_Free_Mem);
 
       --  function __ghdl_text_file_elaborate return file_index_type;
       Start_Function_Decl
@@ -628,6 +680,14 @@ package body Translation is
          Rtis.Rti_Initialize;
       end if;
 
+      --  procedure __ghdl_signal_set_mode (mode : ghdl_i32);
+      Start_Procedure_Decl
+        (Interfaces, Get_Identifier ("__ghdl_signal_set_mode"),
+         O_Storage_External);
+      New_Interface_Decl (Interfaces, Param, Get_Identifier ("ctxt"),
+                          Ghdl_I32_Type);
+      Finish_Subprogram_Decl (Interfaces, Ghdl_Signal_Set_Mode);
+
       --  procedure __ghdl_signal_name_rti
       --       (obj : ghdl_rti_access;
       --        ctxt : ghdl_rti_access;
@@ -682,6 +742,8 @@ package body Translation is
       New_Interface_Decl
         (Interfaces, Param, Get_Identifier ("proc"), Ghdl_Ptr_Type);
       Finish_Subprogram_Decl (Interfaces, Ghdl_Finalize_Register);
+
+      Coverage.Cover_Initialize;
    end Initialize;
 
    procedure Create_Signal_Subprograms (Suffix          : String;
@@ -2130,6 +2192,7 @@ package body Translation is
    begin
       Free_Node_Infos;
       Free_Old_Temp;
+      Trans.Chap10.Free_Identifier_Prefix;
    end Finalize;
 
    procedure Elaborate (Config : Iir; Whole : Boolean)

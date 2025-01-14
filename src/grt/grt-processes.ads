@@ -28,6 +28,7 @@ with Grt.Vhdl_Types; use Grt.Vhdl_Types;
 with Grt.Signals; use Grt.Signals;
 with Grt.Rtis; use Grt.Rtis;
 with Grt.Rtis_Addr;
+with Grt.Stdio;
 
 package Grt.Processes is
    pragma Suppress (All_Checks);
@@ -80,6 +81,17 @@ package Grt.Processes is
    --  to be cleared.
    Break_Flag : Boolean := False;
 
+   --  For AMS: the domain signal.
+   Domain_Sig : Ghdl_Signal_Ptr;
+
+   Quiescent_Domain : constant Ghdl_U8 := 0;
+   Time_Domain : constant Ghdl_U8 := 1;
+   Frequency_Domain : constant Ghdl_U8 := 0;
+
+   type Disp_Process_Name_Acc is access
+     procedure (Stream : Grt.Stdio.FILEs; Proc : Grt.Signals.Process_Acc);
+   Disp_Process_Name_Hook : Disp_Process_Name_Acc;
+
    type Process_Type is private;
    --  type Process_Acc is access all Process_Type;
 
@@ -95,7 +107,6 @@ package Grt.Processes is
 
    --  Total number of resumed processes.
    function Get_Nbr_Resumed_Processes return Long_Long_Integer;
-
 
    --  Instance is the parameter of the process procedure.
    --  This is in fact a fully opaque type whose content is private to the

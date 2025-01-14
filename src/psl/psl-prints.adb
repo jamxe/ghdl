@@ -15,10 +15,11 @@
 --  along with this program.  If not, see <gnu.org/licenses>.
 
 with Types; use Types;
+with Simple_IO; use Simple_IO;
+with Name_Table; use Name_Table;
+
 with PSL.Types; use PSL.Types;
 with PSL.Errors; use PSL.Errors;
-with Name_Table; use Name_Table;
-with Ada.Text_IO; use Ada.Text_IO;
 
 package body PSL.Prints is
    function Get_Priority (N : Node) return Priority is
@@ -422,7 +423,8 @@ package body PSL.Prints is
          when N_Booleans
            | N_Name_Decl =>
             Print_Expr (Prop);
-         when N_Sequences =>
+         when N_Sequences
+           | N_Sequence_Instance =>
             Print_Sequence (Prop, Parent_Prio);
          when N_Property_Instance =>
             Put (Image (Get_Identifier (Get_Declaration (Prop))));

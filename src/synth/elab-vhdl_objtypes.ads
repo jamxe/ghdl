@@ -167,6 +167,9 @@ package Elab.Vhdl_Objtypes is
       --  True if the size of an object is known at compile time.
       --  Used for layout of records.
       Is_Static : Boolean;
+
+      --  True if the bounds are static.  This is used to compute the size
+      --  of the bounds vector.
       Is_Bnd_Static : Boolean;
 
       --  Number of bytes (when in memory) for this type.
@@ -187,6 +190,8 @@ package Elab.Vhdl_Objtypes is
          when Type_Float =>
             Frange : Float_Range_Type;
          when Type_Slice =>
+            Slice_Base : Type_Acc;
+            Slice_Len : Uns32;
             Slice_El : Type_Acc;
          when Type_Array
             | Type_Array_Unbounded
@@ -269,6 +274,8 @@ package Elab.Vhdl_Objtypes is
    function Is_Expr_Pool_Empty return Boolean;
 
    --  Types.
+   function Create_Bit_Subtype (Rng : Discrete_Range_Type) return Type_Acc;
+   function Create_Logic_Subtype (Rng : Discrete_Range_Type) return Type_Acc;
    function Create_Discrete_Type (Rng : Discrete_Range_Type;
                                   Sz : Size_Type;
                                   W : Uns32)
@@ -282,8 +289,8 @@ package Elab.Vhdl_Objtypes is
                                 El_Type : Type_Acc) return Type_Acc;
    function Create_Unbounded_Vector (El_Type : Type_Acc; Idx : Type_Acc)
                                     return Type_Acc;
-   function Create_Slice_Type (Len : Uns32; El_Type : Type_Acc)
-                              return Type_Acc;
+   function Create_Slice_Type
+     (Base_Type : Type_Acc; Len : Uns32; El_Type : Type_Acc) return Type_Acc;
    function Create_Array_Type (Bnd : Bound_Type;
                                Static_Bnd : Boolean;
                                Last : Boolean;
@@ -305,8 +312,16 @@ package Elab.Vhdl_Objtypes is
                                      Els : Rec_El_Array_Acc) return Type_Acc;
 
    --  ACC_TYPE can be null for an incomplete type.
-   function Create_Access_Type (Acc_Type : Type_Acc) return Type_Acc;
-   procedure Complete_Access_Type (Acc_Type : Type_Acc; Des_Typ : Type_Acc);
+   --  For an access subtype: keep the bound size of the parent.
+   --  HAS_SIGNAL must be true if the designed type (ACC_TYPE) can be a signal
+   --  (used to compute the bounds size if unbounded)
+   function Create_Access_Type (Parent_Type : Type_Acc;
+                                Acc_Type : Type_Acc;
+                                Has_Signal : Boolean) return Type_Acc;
+   procedure Complete_Access_Type (Acc_Type : Type_Acc;
+                                   Des_Typ : Type_Acc;
+                                   Has_Signal : Boolean);
+
 
    function Create_File_Type (File_Type : Type_Acc) return Type_Acc;
 
@@ -336,7 +351,7 @@ package Elab.Vhdl_Objtypes is
    --  Return the element of a vector/array/unbounded_array.
    function Get_Array_Element (Arr_Type : Type_Acc) return Type_Acc;
 
-   --  Return True if TYP is bounded (at top level!).
+   --  Return True if TYP is fully bounded.
    function Is_Bounded_Type (Typ : Type_Acc) return Boolean;
 
    function Are_Types_Equal (L, R : Type_Acc) return Boolean;
@@ -369,6 +384,7 @@ package Elab.Vhdl_Objtypes is
    procedure Write_Discrete (Mem : Memory_Ptr; Typ : Type_Acc; Val : Int64);
    function Read_Discrete (Mem : Memory_Ptr; Typ : Type_Acc) return Int64;
    function Read_Discrete (Mt : Memtyp) return Int64;
+   function Read_Uns32 (Mt : Memtyp) return Uns32;
 
    --  Memory allocation.
 
@@ -378,9 +394,6 @@ package Elab.Vhdl_Objtypes is
                                return Memtyp;
    function Create_Memory_Discrete (Val : Int64; Vtype : Type_Acc)
                                    return Memtyp;
-
-   --  For states.
-   function Create_Memory_U32 (Val : Uns32) return Memtyp;
 
    function Alloc_Memory (Vtype : Type_Acc; Pool : Areapool_Acc)
                          return Memory_Ptr;

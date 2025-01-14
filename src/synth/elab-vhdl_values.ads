@@ -140,7 +140,8 @@ package Elab.Vhdl_Values is
    function Is_Equal (L, R : Valtyp) return Boolean;
 
    --  Create a Value_Net.
-   function Create_Value_Net (S : Uns32) return Value_Acc;
+   function Create_Value_Net (S : Uns32; Pool : Areapool_Acc)
+                             return Value_Acc;
 
    --  Create a Value_Wire.
    function Create_Value_Wire (S : Uns32; Pool : Areapool_Acc)
@@ -170,10 +171,12 @@ package Elab.Vhdl_Values is
                                File : File_Index;
                                Pool : Areapool_Acc) return Valtyp;
 
-   function Create_Value_Quantity (Vtype : Type_Acc; Q : Quantity_Index_Type)
-                                  return Valtyp;
-   function Create_Value_Terminal (Vtype : Type_Acc; T : Terminal_Index_Type)
-                                  return Valtyp;
+   function Create_Value_Quantity (Vtype : Type_Acc;
+                                   Q : Quantity_Index_Type;
+                                   Pool : Areapool_Acc) return Valtyp;
+   function Create_Value_Terminal (Vtype : Type_Acc;
+                                   T : Terminal_Index_Type;
+                                   Pool : Areapool_Acc) return Valtyp;
 
    function Create_Value_Alias (Obj : Valtyp;
                                 Off : Value_Offsets;

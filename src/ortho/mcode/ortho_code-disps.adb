@@ -446,9 +446,6 @@ package body Ortho_Code.Disps is
                end loop;
                Put ('}');
             end;
-         when OT_Complete =>
-            Put ("-- complete: ");
-            Disp_Type (Get_Type_Complete_Type (Atype));
       end case;
    end Disp_Type;
 
@@ -539,7 +536,7 @@ package body Ortho_Code.Disps is
       Dtype : O_Tnode;
    begin
       Kind := Get_Decl_Kind (Decl);
-      if Kind = OD_Interface then
+      if Kind = OD_Interface or Kind = OD_Completer then
          return;
       end if;
       Disp_Indent (Indent);
@@ -564,6 +561,8 @@ package body Ortho_Code.Disps is
                     & Uns32'Image (Types.Get_Type_Size (Dtype)) & "}");
             end if;
             Put_Line (";");
+         when OD_Var_Body =>
+            null;
          when OD_Const =>
             Disp_Decl_Storage (Decl);
             Put ("constant ");
@@ -581,7 +580,8 @@ package body Ortho_Code.Disps is
            | OD_Procedure =>
             Disp_Subprg_Decl (Indent, Decl);
             Put_Line (";");
-         when OD_Interface =>
+         when OD_Interface
+           | OD_Completer =>
             null;
          when OD_Body =>
             --  Put ("body ");

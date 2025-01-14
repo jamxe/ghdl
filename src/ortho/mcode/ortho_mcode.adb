@@ -56,6 +56,9 @@ package body Ortho_Mcode is
       Ortho_Code.Types.Finish_Record_Type
         (Ortho_Code.Types.O_Element_List (Elements),
          Ortho_Code.O_Tnode (Res));
+      if Get_Type_Deferred (Ortho_Code.O_Tnode (Res)) then
+         Ortho_Code.Decls.Complete_Type_Decl (Ortho_Code.O_Tnode (Res));
+      end if;
    end Finish_Record_Type;
 
    procedure Start_Record_Subtype
@@ -568,6 +571,15 @@ package body Ortho_Mcode is
         (Ortho_Code.O_Dnode (Res), Ident, To_Storage (Storage),
          Ortho_Code.O_Tnode (Atype));
    end New_Var_Decl;
+
+   procedure New_Var_Body (Var : O_Dnode;
+                           Storage : O_Storage;
+                           Atype : O_Tnode) is
+   begin
+      Ortho_Code.Decls.New_Var_Body
+        (Ortho_Code.O_Dnode (Var), To_Storage (Storage),
+         Ortho_Code.O_Tnode (Atype));
+   end New_Var_Body;
 
    function New_Obj (Obj : O_Dnode) return O_Lnode is
    begin

@@ -98,6 +98,29 @@ package body Errorout is
       return Res;
    end Warning_Image;
 
+   function Warning_Value (S : String) return Msgid_All_Warnings is
+   begin
+      for I in Msgid_Warnings loop
+         if Warning_Image (I) = S then
+            return I;
+         end if;
+      end loop;
+
+      --  Backward compatibility.
+      if S = "no-wait" then
+         return Warnid_Missing_Wait;
+      end if;
+      if S = "no-assoc" then
+         return Warnid_Missing_Assoc;
+      end if;
+      if S = "reserved" then
+         return Warnid_Reserved_Word;
+      end if;
+
+      --  Not found.
+      return Msgid_Warning;
+   end Warning_Value;
+
    procedure Save_Warnings_Setting (Res : out Warnings_Setting) is
    begin
       Res := Warnings_Control;
@@ -159,10 +182,51 @@ package body Errorout is
       return Res;
    end "+";
 
+   function Get_Identifier_From_Source (Id : Name_Id; Loc : Location_Type)
+                                       return String
+   is
+      use Name_Table;
+      File : Source_File_Entry;
+      Pos : Source_Ptr;
+      Buf : File_Buffer_Acc;
+      Len : Source_Ptr;
+   begin
+      --  Avoid crash in case of invalid input...
+      if Id = Null_Identifier then
+         return "";
+      elsif Is_Character (Id) then
+         return ''' & Get_Character (Id) & ''';
+      elsif Loc = No_Location then
+         return Name_Table.Image (Id);
+      end if;
+
+      Location_To_File_Pos (Loc, File, Pos);
+      Buf := Get_File_Source (File);
+      Len := Source_Ptr (Get_Name_Length (Id));
+
+      if Len = 0 or else Pos + Len >= Get_File_Length (File) then
+         return Name_Table.Image (Id);
+      end if;
+
+      declare
+         subtype S is String (1 .. Positive (Len));
+      begin
+         return S (Buf (Pos .. Pos + Len - 1));
+      end;
+   end Get_Identifier_From_Source;
+
    procedure Output_Identifier (Id : Name_Id) is
    begin
       Report_Handler.Message (Name_Table.Image (Id));
    end Output_Identifier;
+
+   procedure Output_Quoted_Identifier_From_Source
+     (Id : Name_Id; Loc : Location_Type) is
+   begin
+      Report_Handler.Message ("""");
+      Report_Handler.Message (Get_Identifier_From_Source (Id, Loc));
+      Report_Handler.Message ("""");
+   end Output_Quoted_Identifier_From_Source;
 
    procedure Output_Quoted_Identifier (Id : Name_Id) is
    begin

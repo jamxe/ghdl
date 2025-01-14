@@ -15,8 +15,9 @@
 --  along with this program.  If not, see <gnu.org/licenses>.
 
 with Tables;
-with Ada.Text_IO; use Ada.Text_IO;
+with Simple_IO; use Simple_IO;
 with Types; use Types;
+
 with PSL.Types; use PSL.Types;
 with PSL.Errors; use PSL.Errors;
 with PSL.CSE; use PSL.CSE;
@@ -1034,7 +1035,16 @@ package body PSL.Build is
          when N_Abort
             | N_Sync_Abort =>
             R := Build_Property_FA (Get_Property (N), With_Active);
-            Build_Abort (R, Get_Boolean (N));
+            if not Get_Skip_Flag (N) then
+               Build_Abort (R, Get_Boolean (N));
+            end if;
+            return R;
+         when N_Async_Abort =>
+            R := Build_Property_FA (Get_Property (N), With_Active);
+            if not Get_Skip_Flag (N) then
+               Error_Msg_Sem
+                 ("async_abort is not handled inside properties", N);
+            end if;
             return R;
          when N_Property_Instance =>
             declare
