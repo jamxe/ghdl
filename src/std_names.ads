@@ -190,7 +190,15 @@ package Std_Names is
    subtype Name_Id_Vhdl08_Reserved_Words is
      Name_Id range Name_Assume .. Name_Last_Vhdl08;
 
-   Name_First_Ams_Keyword :  constant Name_Id := Name_Last_Vhdl08 + 1;
+   Name_First_Vhdl19 :       constant Name_Id := Name_Last_Vhdl08 + 1;
+   Name_Private :            constant Name_Id := Name_First_Vhdl19 + 0;
+   Name_View :               constant Name_Id := Name_First_Vhdl19 + 1;
+   Name_Last_Vhdl19 :        constant Name_Id := Name_First_Vhdl19 + 1;
+
+   subtype Name_Id_Vhdl19_Reserved_Words is
+     Name_Id range Name_First_Vhdl19 .. Name_Last_Vhdl19;
+
+   Name_First_Ams_Keyword :  constant Name_Id := Name_Last_Vhdl19 + 1;
    Name_Across :         constant Name_Id := Name_First_Ams_Keyword + 000;
    Name_Break :          constant Name_Id := Name_First_Ams_Keyword + 001;
    Name_Limit :          constant Name_Id := Name_First_Ams_Keyword + 002;
@@ -513,8 +521,14 @@ package Std_Names is
    Name_Last_Vhdl08_Attribute :  constant Name_Id :=
                                              Name_First_Vhdl08_Attribute + 00;
 
+   Name_First_Vhdl19_Attribute : constant Name_Id :=
+                                             Name_Last_Vhdl08_Attribute + 01;
+   Name_Converse :       constant Name_Id := Name_First_Vhdl19_Attribute + 00;
+   Name_Last_Vhdl19_Attribute :  constant Name_Id :=
+                                             Name_First_Vhdl19_Attribute + 00;
+
    Name_First_AMS_Attribute : constant Name_Id :=
-     Name_Last_Vhdl08_Attribute + 1;
+     Name_Last_Vhdl19_Attribute + 1;
    Name_Contribution :   constant Name_Id := Name_First_AMS_Attribute + 000;
    Name_Dot :            constant Name_Id := Name_First_AMS_Attribute + 001;
    Name_Integ :          constant Name_Id := Name_First_AMS_Attribute + 002;
@@ -778,19 +792,25 @@ package Std_Names is
    Name_Ceil               : constant Name_Id := Name_First_Ieee_Name + 039;
    Name_Floor              : constant Name_Id := Name_First_Ieee_Name + 040;
    Name_Round              : constant Name_Id := Name_First_Ieee_Name + 041;
-   Name_Log2               : constant Name_Id := Name_First_Ieee_Name + 042;
-   Name_Log10              : constant Name_Id := Name_First_Ieee_Name + 043;
-   Name_Sin                : constant Name_Id := Name_First_Ieee_Name + 044;
-   Name_Cos                : constant Name_Id := Name_First_Ieee_Name + 045;
-   Name_Arctan             : constant Name_Id := Name_First_Ieee_Name + 046;
-   Name_Sign               : constant Name_Id := Name_First_Ieee_Name + 047;
-   Name_Sqrt               : constant Name_Id := Name_First_Ieee_Name + 048;
-   Name_Shl                : constant Name_Id := Name_First_Ieee_Name + 049;
-   Name_Shr                : constant Name_Id := Name_First_Ieee_Name + 050;
-   Name_Ext                : constant Name_Id := Name_First_Ieee_Name + 051;
-   Name_Sxt                : constant Name_Id := Name_First_Ieee_Name + 052;
-   Name_Find_Leftmost      : constant Name_Id := Name_First_Ieee_Name + 053;
-   Name_Find_Rightmost     : constant Name_Id := Name_First_Ieee_Name + 054;
+   Name_Trunc              : constant Name_Id := Name_First_Ieee_Name + 042;
+   Name_Realmax            : constant Name_Id := Name_First_Ieee_Name + 043;
+   Name_Exp                : constant Name_Id := Name_First_Ieee_Name + 044;
+   Name_Log                : constant Name_Id := Name_First_Ieee_Name + 045;
+   Name_Log2               : constant Name_Id := Name_First_Ieee_Name + 046;
+   Name_Log10              : constant Name_Id := Name_First_Ieee_Name + 047;
+   Name_Sin                : constant Name_Id := Name_First_Ieee_Name + 048;
+   Name_Cos                : constant Name_Id := Name_First_Ieee_Name + 049;
+   Name_Arctan             : constant Name_Id := Name_First_Ieee_Name + 050;
+   Name_Sinh               : constant Name_Id := Name_First_Ieee_Name + 051;
+   Name_Cosh               : constant Name_Id := Name_First_Ieee_Name + 052;
+   Name_Sign               : constant Name_Id := Name_First_Ieee_Name + 053;
+   Name_Sqrt               : constant Name_Id := Name_First_Ieee_Name + 054;
+   Name_Shl                : constant Name_Id := Name_First_Ieee_Name + 055;
+   Name_Shr                : constant Name_Id := Name_First_Ieee_Name + 056;
+   Name_Ext                : constant Name_Id := Name_First_Ieee_Name + 057;
+   Name_Sxt                : constant Name_Id := Name_First_Ieee_Name + 058;
+   Name_Find_Leftmost      : constant Name_Id := Name_First_Ieee_Name + 059;
+   Name_Find_Rightmost     : constant Name_Id := Name_First_Ieee_Name + 060;
    Name_Last_Ieee_Name     : constant Name_Id := Name_Find_Rightmost;
 
    Name_First_Synthesis    : constant Name_Id := Name_Last_Ieee_Name + 1;
@@ -828,9 +848,11 @@ package Std_Names is
    --  Verilog system tasks/functions.
    Name_First_Systask :  constant Name_Id := Name_Last_Directive + 1;
    Name_Bits :           constant Name_Id := Name_First_Systask + 00;
-   Name_D_Root :         constant Name_Id := Name_First_Systask + 01;
-   Name_D_Unit :         constant Name_Id := Name_First_Systask + 02;
-   Name_Last_Systask :   constant Name_Id := Name_D_Unit;
+   Name_Cast :           constant Name_Id := Name_First_Systask + 01;
+   Name_D_Root :         constant Name_Id := Name_First_Systask + 02;
+   Name_D_Unit :         constant Name_Id := Name_First_Systask + 03;
+   Name_Typename :       constant Name_Id := Name_First_Systask + 04;
+   Name_Last_Systask :   constant Name_Id := Name_Typename;
 
    --  Verilog methods
    Name_First_SV_Method :   constant Name_Id := Name_Last_Systask + 1;
@@ -843,26 +865,45 @@ package Std_Names is
    Name_Push_Back :         constant Name_Id := Name_First_SV_Method + 6;
    Name_Name :              constant Name_Id := Name_First_SV_Method + 7;
    Name_Len :               constant Name_Id := Name_First_SV_Method + 8;
-   Name_Substr :            constant Name_Id := Name_First_SV_Method + 9;
-   Name_Exists :            constant Name_Id := Name_First_SV_Method + 10;
-   Name_Atoi :              constant Name_Id := Name_First_SV_Method + 11;
-   Name_Itoa :              constant Name_Id := Name_First_SV_Method + 12;
-   Name_Find :              constant Name_Id := Name_First_SV_Method + 13;
-   Name_Find_Index :        constant Name_Id := Name_First_SV_Method + 14;
-   Name_Find_First :        constant Name_Id := Name_First_SV_Method + 15;
-   Name_Find_First_Index :  constant Name_Id := Name_First_SV_Method + 16;
-   Name_Find_Last :         constant Name_Id := Name_First_SV_Method + 17;
-   Name_Find_Last_Index :   constant Name_Id := Name_First_SV_Method + 18;
-   Name_Num :               constant Name_Id := Name_First_SV_Method + 19;
-   Name_Randomize :         constant Name_Id := Name_First_SV_Method + 20;
-   Name_Pre_Randomize :     constant Name_Id := Name_First_SV_Method + 21;
-   Name_Post_Randomize :    constant Name_Id := Name_First_SV_Method + 22;
-   Name_Srandom :           constant Name_Id := Name_First_SV_Method + 23;
-   Name_Get_Randstate :     constant Name_Id := Name_First_SV_Method + 24;
-   Name_Set_Randstate :     constant Name_Id := Name_First_SV_Method + 25;
-   Name_Seed :              constant Name_Id := Name_First_SV_Method + 26;
-   Name_State :             constant Name_Id := Name_First_SV_Method + 27;
-   Name_Last_SV_Method :    constant Name_Id := Name_State;
+   Name_Putc :              constant Name_Id := Name_First_SV_Method + 9;
+   Name_Getc :              constant Name_Id := Name_First_SV_Method + 10;
+   Name_Toupper :           constant Name_Id := Name_First_SV_Method + 11;
+   Name_Tolower :           constant Name_Id := Name_First_SV_Method + 12;
+   Name_Compare :           constant Name_Id := Name_First_SV_Method + 13;
+   Name_Icompare :          constant Name_Id := Name_First_SV_Method + 14;
+   Name_Substr :            constant Name_Id := Name_First_SV_Method + 15;
+   Name_Exists :            constant Name_Id := Name_First_SV_Method + 16;
+   Name_Atoi :              constant Name_Id := Name_First_SV_Method + 17;
+   Name_Atohex :            constant Name_Id := Name_First_SV_Method + 18;
+   Name_Atooct :            constant Name_Id := Name_First_SV_Method + 19;
+   Name_Atobin :            constant Name_Id := Name_First_SV_Method + 20;
+   Name_Atoreal :           constant Name_Id := Name_First_SV_Method + 21;
+   Name_Itoa :              constant Name_Id := Name_First_SV_Method + 22;
+   Name_Hextoa :            constant Name_Id := Name_First_SV_Method + 23;
+   Name_Octtoa :            constant Name_Id := Name_First_SV_Method + 24;
+   Name_Bintoa :            constant Name_Id := Name_First_SV_Method + 25;
+   Name_Realtoa :           constant Name_Id := Name_First_SV_Method + 26;
+   Name_Find :              constant Name_Id := Name_First_SV_Method + 27;
+   Name_Find_Index :        constant Name_Id := Name_First_SV_Method + 28;
+   Name_Find_First :        constant Name_Id := Name_First_SV_Method + 29;
+   Name_Find_First_Index :  constant Name_Id := Name_First_SV_Method + 30;
+   Name_Find_Last :         constant Name_Id := Name_First_SV_Method + 31;
+   Name_Find_Last_Index :   constant Name_Id := Name_First_SV_Method + 32;
+   Name_Num :               constant Name_Id := Name_First_SV_Method + 33;
+   Name_Sort :              constant Name_Id := Name_First_SV_Method + 34;
+   Name_Rsort :             constant Name_Id := Name_First_SV_Method + 35;
+   Name_Shuffle :           constant Name_Id := Name_First_SV_Method + 36;
+   Name_Rand_Mode :         constant Name_Id := Name_First_SV_Method + 37;
+   Name_Randomize :         constant Name_Id := Name_First_SV_Method + 38;
+   Name_Pre_Randomize :     constant Name_Id := Name_First_SV_Method + 39;
+   Name_Post_Randomize :    constant Name_Id := Name_First_SV_Method + 40;
+   Name_Srandom :           constant Name_Id := Name_First_SV_Method + 41;
+   Name_Get_Randstate :     constant Name_Id := Name_First_SV_Method + 42;
+   Name_Set_Randstate :     constant Name_Id := Name_First_SV_Method + 43;
+   Name_Seed :              constant Name_Id := Name_First_SV_Method + 44;
+   Name_State :             constant Name_Id := Name_First_SV_Method + 45;
+   Name_Triggered :         constant Name_Id := Name_First_SV_Method + 46;
+   Name_Last_SV_Method :    constant Name_Id := Name_Triggered;
 
    --  BSV names
    Name_First_BSV :         constant Name_Id := Name_Last_SV_Method + 1;
@@ -1042,25 +1083,24 @@ package Std_Names is
    Name_Technology :         constant Name_Id := Name_First_Edif +  8;
    Name_Cell :               constant Name_Id := Name_First_Edif +  9;
    Name_Celltype :           constant Name_Id := Name_First_Edif + 10;
-   Name_View :               constant Name_Id := Name_First_Edif + 11;
-   Name_Viewtype :           constant Name_Id := Name_First_Edif + 12;
-   Name_Direction :          constant Name_Id := Name_First_Edif + 13;
-   Name_Contents :           constant Name_Id := Name_First_Edif + 14;
-   Name_Net :                constant Name_Id := Name_First_Edif + 15;
-   Name_Viewref :            constant Name_Id := Name_First_Edif + 16;
-   Name_Cellref :            constant Name_Id := Name_First_Edif + 17;
-   Name_Libraryref :         constant Name_Id := Name_First_Edif + 18;
-   Name_Portinstance :       constant Name_Id := Name_First_Edif + 19;
-   Name_Joined :             constant Name_Id := Name_First_Edif + 20;
-   Name_Portref :            constant Name_Id := Name_First_Edif + 21;
-   Name_Instanceref :        constant Name_Id := Name_First_Edif + 22;
-   Name_Design :             constant Name_Id := Name_First_Edif + 23;
-   Name_Designator :         constant Name_Id := Name_First_Edif + 24;
-   Name_Owner :              constant Name_Id := Name_First_Edif + 25;
-   Name_Member :             constant Name_Id := Name_First_Edif + 26;
-   Name_Number :             constant Name_Id := Name_First_Edif + 27;
-   Name_Rename :             constant Name_Id := Name_First_Edif + 28;
-   Name_Userdata :           constant Name_Id := Name_First_Edif + 29;
+   Name_Viewtype :           constant Name_Id := Name_First_Edif + 11;
+   Name_Direction :          constant Name_Id := Name_First_Edif + 12;
+   Name_Contents :           constant Name_Id := Name_First_Edif + 13;
+   Name_Net :                constant Name_Id := Name_First_Edif + 14;
+   Name_Viewref :            constant Name_Id := Name_First_Edif + 15;
+   Name_Cellref :            constant Name_Id := Name_First_Edif + 16;
+   Name_Libraryref :         constant Name_Id := Name_First_Edif + 17;
+   Name_Portinstance :       constant Name_Id := Name_First_Edif + 18;
+   Name_Joined :             constant Name_Id := Name_First_Edif + 19;
+   Name_Portref :            constant Name_Id := Name_First_Edif + 20;
+   Name_Instanceref :        constant Name_Id := Name_First_Edif + 21;
+   Name_Design :             constant Name_Id := Name_First_Edif + 22;
+   Name_Designator :         constant Name_Id := Name_First_Edif + 23;
+   Name_Owner :              constant Name_Id := Name_First_Edif + 24;
+   Name_Member :             constant Name_Id := Name_First_Edif + 25;
+   Name_Number :             constant Name_Id := Name_First_Edif + 26;
+   Name_Rename :             constant Name_Id := Name_First_Edif + 27;
+   Name_Userdata :           constant Name_Id := Name_First_Edif + 28;
    Name_Last_Edif :          constant Name_Id := Name_Userdata;
 
    -- Initialize the name table with the values defined here.

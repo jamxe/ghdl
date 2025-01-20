@@ -20,6 +20,14 @@ define pt1
 call vhdl.disp_tree.disp_iir ($arg0, 1, 1)
 end
 
+define vlg_ptf
+call verilog.disp_tree.disp_tree ($arg0, 0, 0)
+end
+
+define vlg_pt1
+call verilog.disp_tree.disp_tree ($arg0, 0, 2)
+end
+
 define prt
 set lang c
 print (iirs__iir *) $
@@ -63,7 +71,7 @@ Print the value that is $.
 end
 
 define ploc
-call disp_iir_location ($arg0)
+call elab.debugger.disp_iir_location ($arg0)
 end
 
 document ploc
@@ -83,4 +91,5 @@ set lang ada
 # Must be the last command: some distributions use a shared libgnat by default,
 # and don't have the minimal required set of debug info to support this command.
 # As a result, this command fails and stop this script.
-catch exception
+#catch exception
+break __gnat_debug_raise_exception

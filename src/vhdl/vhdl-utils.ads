@@ -30,6 +30,10 @@ package Vhdl.Utils is
    function Is_Overflow_Literal (N : Iir) return Boolean;
    pragma Inline (Is_Overflow_Literal);
 
+   --  Return true iff statement N has a label coming from sources
+   --  (and not a generated one).
+   function Has_User_Label (N : Iir) return Boolean;
+
    --  If N is a literal and has a literal origin, return the literal origin.
    --  Otherwise return N.
    --  In other words, return the node as it was.
@@ -199,6 +203,9 @@ package Vhdl.Utils is
    --  Return TRUE iff DEF is an array type (or subtype) definition.
    function Is_Array_Type (Def : Iir) return Boolean;
 
+   --  Return TRUE iff DEF is a record type (or subtype) definition.
+   function Is_Record_Type (Def : Iir) return Boolean;
+
    --  Return True iff OBJ can be the target of an aggregate with an others
    --  choice (cf LRM08 9.3.3.3).
    --  Return True iff object or member of it is declared to be a fully
@@ -345,6 +352,15 @@ package Vhdl.Utils is
    function Is_Entity_Instantiation
      (Inst : Iir_Component_Instantiation_Statement) return Boolean;
 
+   --  If a component or an entity contains an interface package or type,
+   --  the ports have to be instantiated in the case they use a type of the
+   --  interface.
+   --  if FOR_SEM is true, it will return True if there is an interface
+   --  package.  This is needed to correctly match object subtypes.
+   --  This is used to set macro_expand_flag.
+   function Component_Need_Instance (Comp : Iir; For_Sem : Boolean)
+                                    return Boolean;
+
    --  Get the expression of the attribute specification corresponding to the
    --  attribute name NAME.  Meaningful only for static values.
    function Get_Attribute_Name_Expression (Name : Iir) return Iir;
@@ -450,6 +466,34 @@ package Vhdl.Utils is
    procedure Get_File_Signature (Def : Iir;
                                  Res : in out String;
                                  Off : in out Natural);
+
+   --  Apply the 'Converse attribute on MODE.
+   --  Follow able of LRM19 16.2.8 Predefined attributes of named mode views
+   function Get_Converse_Mode (Mode : Iir_Mode) return Iir_Mode;
+
+   --  Return the mode_view_declaration for NAME.
+   --  Also handle 'Converse attributes.
+   procedure Extract_Mode_View_Name
+     (Name : Iir; View : out Iir; Reversed : out Boolean);
+
+   --  Adjust VIEW using EL.
+   --  At the call, VIEW is a mode_view_declaration; at the output VIEW
+   --  is either a simple_mode_view_element or a mode_view_declaration.
+   procedure Update_Mode_View_Selected_Name
+     (View : in out Iir; Reversed : in out Boolean; El : Iir);
+
+   --  Likewise, but using element indexed by POS.
+   procedure Update_Mode_View_By_Pos (Sub_View : out Iir;
+                                      Sub_Reversed : out Boolean;
+                                      View : Iir;
+                                      Reversed : Boolean;
+                                      Pos : Natural);
+
+   --  Set VIEW to a simple_mode_view_element or a mode_view_declaration that
+   --  applies to NAME.  The base name of NAME must be a view interface.
+   --  Reversed is set if the view is reversed (due to 'Converse).
+   procedure Get_Mode_View_From_Name
+     (Name : Iir; View : out Iir; Reversed : out Boolean);
 
    --  Like Get_Identifier but return a Name_Id for the same casing as it
    --  appears in the source file.

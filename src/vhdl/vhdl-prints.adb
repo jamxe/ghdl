@@ -21,6 +21,7 @@
 with Ada.Unchecked_Deallocation;
 
 with Types; use Types;
+with Outputs;
 with Simple_IO;
 with Flags; use Flags;
 with Name_Table;
@@ -391,22 +392,28 @@ package body Vhdl.Prints is
       Close_Hbox (Ctxt);
    end Disp_End;
 
-   procedure Disp_End_Label_No_Close
-     (Ctxt : in out Ctxt_Class; Stmt : Iir; Tok : Token_Type) is
+   procedure Disp_Matching (Ctxt : in out Ctxt_Class; Stmt : Iir) is
+   begin
+      if Get_Matching_Flag (Stmt) then
+         Disp_Token (Ctxt, Tok_Question_Mark);
+      end if;
+   end Disp_Matching;
+
+   procedure Disp_End_Label (Ctxt : in out Ctxt_Class;
+                             Stmt : Iir;
+                             Tok : Token_Type;
+                             With_Matching : Boolean := False) is
    begin
       Start_Hbox (Ctxt);
       Disp_Token (Ctxt, Tok_End);
       Disp_Token (Ctxt, Tok);
+      if With_Matching then
+         Disp_Matching (Ctxt, Stmt);
+      end if;
       if Get_End_Has_Identifier (Stmt) then
          Disp_Ident (Ctxt, Get_Label (Stmt));
       end if;
       Disp_Token (Ctxt, Tok_Semi_Colon);
-   end Disp_End_Label_No_Close;
-
-   procedure Disp_End_Label
-     (Ctxt : in out Ctxt_Class; Stmt : Iir; Tok : Token_Type) is
-   begin
-      Disp_End_Label_No_Close (Ctxt, Stmt, Tok);
       Close_Hbox (Ctxt);
    end Disp_End_Label;
 
@@ -484,11 +491,9 @@ package body Vhdl.Prints is
       Inner (Ind);
    end Disp_Resolution_Indication;
 
-   procedure Disp_Element_Constraint
-     (Ctxt : in out Ctxt_Class; Def : Iir; Type_Mark : Iir);
+   procedure Disp_Element_Constraint (Ctxt : in out Ctxt_Class; Def : Iir);
 
-   procedure Disp_Discrete_Range
-     (Ctxt : in out Ctxt_Class; Iterator: Iir) is
+   procedure Disp_Discrete_Range (Ctxt : in out Ctxt_Class; Iterator: Iir) is
    begin
       if Get_Kind (Iterator) in Iir_Kinds_Subtype_Definition then
          Disp_Subtype_Indication (Ctxt, Iterator);
@@ -519,7 +524,7 @@ package body Vhdl.Prints is
    end Disp_Array_Sub_Definition_Indexes;
 
    procedure Disp_Array_Element_Constraint
-     (Ctxt : in out Ctxt_Class; Def : Iir; Type_Mark : Iir) is
+     (Ctxt : in out Ctxt_Class; Def : Iir) is
    begin
       if not Get_Has_Array_Constraint_Flag (Def)
         and then not Get_Has_Element_Constraint_Flag (Def)
@@ -538,23 +543,19 @@ package body Vhdl.Prints is
       end if;
 
       if Get_Has_Element_Constraint_Flag (Def) then
-         Disp_Element_Constraint (Ctxt, Get_Array_Element_Constraint (Def),
-                                  Get_Element_Subtype (Type_Mark));
+         Disp_Element_Constraint (Ctxt, Get_Array_Element_Constraint (Def));
       end if;
    end Disp_Array_Element_Constraint;
 
    procedure Disp_Record_Element_Constraint
      (Ctxt : in out Ctxt_Class; Def : Iir)
    is
-      El_List : constant Iir_Flist := Get_Elements_Declaration_List (Def);
       El : Iir;
       Has_El : Boolean := False;
    begin
-      for I in Flist_First .. Flist_Last (El_List) loop
-         El := Get_Nth_Element (El_List, I);
-         if Get_Kind (El) = Iir_Kind_Record_Element_Constraint
-           and then Get_Parent (El) = Def
-         then
+      El := Get_Owned_Elements_Chain (Def);
+      while El /= Null_Iir loop
+         if Get_Kind (El) = Iir_Kind_Record_Element_Constraint then
             if Has_El then
                Disp_Token (Ctxt, Tok_Comma);
             else
@@ -562,9 +563,9 @@ package body Vhdl.Prints is
                Has_El := True;
             end if;
             Disp_Name_Of (Ctxt, El);
-            Disp_Element_Constraint (Ctxt, Get_Type (El),
-                                     Get_Base_Type (Get_Type (El)));
+            Disp_Element_Constraint (Ctxt, Get_Subtype_Indication (El));
          end if;
+         El := Get_Chain (El);
       end loop;
       if Has_El then
          Disp_Token (Ctxt, Tok_Right_Paren);
@@ -572,13 +573,13 @@ package body Vhdl.Prints is
    end Disp_Record_Element_Constraint;
 
    procedure Disp_Element_Constraint
-     (Ctxt : in out Ctxt_Class; Def : Iir; Type_Mark : Iir) is
+     (Ctxt : in out Ctxt_Class; Def : Iir) is
    begin
       case Get_Kind (Def) is
          when Iir_Kind_Record_Subtype_Definition =>
             Disp_Record_Element_Constraint (Ctxt, Def);
          when Iir_Kind_Array_Subtype_Definition =>
-            Disp_Array_Element_Constraint (Ctxt, Def, Type_Mark);
+            Disp_Array_Element_Constraint (Ctxt, Def);
          when others =>
             Error_Kind ("disp_element_constraint", Def);
       end case;
@@ -629,8 +630,9 @@ package body Vhdl.Prints is
 
       case Get_Kind (Def) is
          when Iir_Kind_Array_Subtype_Definition =>
-            Disp_Array_Element_Constraint
-              (Ctxt, Def, Or_Else (Type_Mark, Def));
+            Disp_Array_Element_Constraint (Ctxt, Def);
+         when Iir_Kind_Record_Subtype_Definition =>
+            Disp_Record_Element_Constraint (Ctxt, Def);
          when Iir_Kind_Subtype_Definition =>
             declare
                Rng : constant Iir := Get_Range_Constraint (Def);
@@ -669,13 +671,11 @@ package body Vhdl.Prints is
                      if Des_Ind /= Null_Iir then
                         pragma Assert (Get_Kind (Des_Ind)
                                          = Iir_Kind_Array_Subtype_Definition);
-                        Disp_Array_Element_Constraint
-                          (Ctxt, Des_Ind, Get_Designated_Type (Base_Type));
+                        Disp_Array_Element_Constraint (Ctxt, Des_Ind);
                      end if;
                   end;
                when Iir_Kind_Array_Type_Definition =>
-                  Disp_Array_Element_Constraint
-                    (Ctxt, Def, Or_Else (Type_Mark, Def));
+                  Disp_Array_Element_Constraint (Ctxt, Def);
                when Iir_Kind_Record_Type_Definition =>
                   Disp_Record_Element_Constraint (Ctxt, Def);
                when others =>
@@ -1706,6 +1706,14 @@ package body Vhdl.Prints is
 
       Disp_Function_Name (Ctxt, Subprg);
 
+      if Get_Kind (Subprg) in Iir_Kinds_Subprogram_Declaration then
+         Inter := Get_Generic_Chain (Subprg);
+         if Inter /= Null_Iir then
+            Disp_Token (Ctxt, Tok_Generic);
+            Disp_Interface_Chain (Ctxt, Inter, True);
+         end if;
+      end if;
+
       if Get_Has_Parameter (Subprg) then
          Disp_Token (Ctxt, Tok_Parameter);
       end if;
@@ -1731,7 +1739,7 @@ package body Vhdl.Prints is
          Default := Get_Default_Subprogram (Subprg);
          if Default /= Null_Iir then
             Disp_Token (Ctxt, Tok_Is);
-            if Get_Kind (Default) = Iir_Kind_Reference_Name then
+            if Get_Kind (Default) = Iir_Kind_Box_Name then
                Disp_Token (Ctxt, Tok_Box);
             else
                Print (Ctxt, Default);
@@ -1758,6 +1766,34 @@ package body Vhdl.Prints is
          Disp_End (Ctxt, Subprg, Tok_Procedure);
       end if;
    end Disp_Subprogram_Body;
+
+   procedure Disp_Generic_Map_Aspect
+     (Ctxt : in out Ctxt_Class; Parent : Iir) is
+   begin
+      Disp_Token (Ctxt, Tok_Generic, Tok_Map);
+      Disp_Association_Chain (Ctxt, Get_Generic_Map_Aspect_Chain (Parent));
+   end Disp_Generic_Map_Aspect;
+
+   procedure Disp_Subprogram_Instantiation_Declaration
+     (Ctxt : in out Ctxt_Class; Decl: Iir)
+   is
+      Tok : Token_Type;
+   begin
+      Start_Hbox (Ctxt);
+      case Iir_Kinds_Subprogram_Instantiation_Declaration (Get_Kind (Decl)) is
+         when Iir_Kind_Procedure_Instantiation_Declaration =>
+            Tok := Tok_Procedure;
+         when Iir_Kind_Function_Instantiation_Declaration =>
+            Tok := Tok_Function;
+      end case;
+      Disp_Token (Ctxt, Tok);
+      Disp_Identifier (Ctxt, Decl);
+      Disp_Token (Ctxt, Tok_Is, Tok_New);
+      Print (Ctxt, Get_Uninstantiated_Subprogram_Name (Decl));
+      Disp_Generic_Map_Aspect (Ctxt, Decl);
+      Disp_Token (Ctxt, Tok_Semi_Colon);
+      Close_Hbox (Ctxt);
+   end Disp_Subprogram_Instantiation_Declaration;
 
    procedure Disp_Instantiation_List
      (Ctxt : in out Ctxt_Class; Insts: Iir_Flist)
@@ -1967,6 +2003,54 @@ package body Vhdl.Prints is
       Disp_Token (Ctxt, Tok_Right_Paren, Tok_Semi_Colon);
       Close_Hbox (Ctxt);
    end Disp_Group_Declaration;
+
+   procedure Disp_Mode_View_Declaration (Ctxt : in out Ctxt_Class; Decl : Iir)
+   is
+      El, First : Iir;
+      Reindent : Boolean;
+   begin
+      Start_Hbox (Ctxt);
+      Disp_Token (Ctxt, Tok_View);
+      Disp_Identifier (Ctxt, Decl);
+      Disp_Token (Ctxt, Tok_Of);
+      Print (Ctxt, Get_Subtype_Indication (Decl));
+      Disp_Token (Ctxt, Tok_Is);
+      Close_Hbox (Ctxt);
+      Start_Vbox (Ctxt);
+      Reindent := True;
+      El := Get_Elements_Definition_Chain (Decl);
+      while El /= Null_Iir loop
+         if Reindent then
+            First := El;
+            Start_Hbox (Ctxt);
+         end if;
+         Disp_Identifier (Ctxt, El);
+         if Get_Has_Identifier_List (El) then
+            Disp_Token (Ctxt, Tok_Comma);
+            Reindent := False;
+         else
+            Disp_Token (Ctxt, Tok_Colon);
+            case Iir_Kinds_Mode_View_Element_Definition (Get_Kind (First)) is
+               when Iir_Kind_Simple_Mode_View_Element =>
+                  Disp_Mode (Ctxt, Get_Mode (First));
+               when Iir_Kind_Array_Mode_View_Element =>
+                  Disp_Token (Ctxt, Tok_View);
+                  Disp_Token (Ctxt, Tok_Left_Paren);
+                  Print (Ctxt, Get_Mode_View_Name (First));
+                  Disp_Token (Ctxt, Tok_Right_Paren);
+               when Iir_Kind_Record_Mode_View_Element =>
+                  Disp_Token (Ctxt, Tok_View);
+                  Print (Ctxt, Get_Mode_View_Name (First));
+            end case;
+            Disp_Token (Ctxt, Tok_Semi_Colon);
+            Close_Hbox (Ctxt);
+            Reindent := True;
+         end if;
+         El := Get_Chain (El);
+      end loop;
+      Close_Vbox (Ctxt);
+      Disp_End_Label (Ctxt, Decl, Tok_View);
+   end Disp_Mode_View_Declaration;
 
    procedure Print_Expr (Ctxt : in out Ctxt_Class;
                          N : PSL_Node;
@@ -2324,7 +2408,8 @@ package body Vhdl.Prints is
          when N_Booleans
            | N_Name_Decl =>
             Print_Expr (Ctxt, Prop);
-         when N_Sequences =>
+         when N_Sequences
+           | N_Sequence_Instance =>
             Print_Sequence (Ctxt, Prop, Parent_Prio);
          when N_Property_Instance =>
             Disp_Ident (Ctxt, Get_Identifier (Get_Declaration (Prop)));
@@ -2598,6 +2683,8 @@ package body Vhdl.Prints is
                Disp_Token (Ctxt, Tok_Is);
                Close_Hbox (Ctxt);
                Disp_Subprogram_Body (Ctxt, Decl);
+            when Iir_Kinds_Subprogram_Instantiation_Declaration =>
+               Disp_Subprogram_Instantiation_Declaration (Ctxt, Decl);
             when Iir_Kind_Protected_Type_Body =>
                Disp_Protected_Type_Body (Ctxt, Decl);
             when Iir_Kind_Configuration_Specification =>
@@ -2624,6 +2711,9 @@ package body Vhdl.Prints is
                Disp_Package_Instantiation_Declaration (Ctxt, Decl);
             when Iir_Kind_Psl_Default_Clock =>
                Disp_Psl_Default_Clock (Ctxt, Decl);
+
+            when Iir_Kind_Mode_View_Declaration =>
+               Disp_Mode_View_Declaration (Ctxt, Decl);
 
             when Iir_Kind_Suspend_State_Declaration =>
                Start_Hbox (Ctxt);
@@ -2771,6 +2861,7 @@ package body Vhdl.Prints is
       Disp_Token (Ctxt, Tok_With);
       Print (Ctxt, Get_Expression (Stmt));
       Disp_Token (Ctxt, Tok_Select);
+      Disp_Matching (Ctxt, Stmt);
       Print (Ctxt, Get_Target (Stmt));
       Disp_Token (Ctxt, Tok_Less_Equal);
       Disp_Delay_Mechanism (Ctxt, Stmt);
@@ -2823,6 +2914,38 @@ package body Vhdl.Prints is
       Close_Hbox (Ctxt);
    end Disp_Conditional_Variable_Assignment;
 
+   procedure Disp_Selected_Expressions
+     (Ctxt : in out Ctxt_Class; Stmt : Iir)
+   is
+      Assoc_Chain : constant Iir := Get_Selected_Expressions_Chain (Stmt);
+      Assoc: Iir;
+   begin
+      Assoc := Assoc_Chain;
+      while Assoc /= Null_Iir loop
+         if Assoc /= Assoc_Chain then
+            Disp_Token (Ctxt, Tok_Comma);
+         end if;
+         Print (Ctxt, Get_Associated_Expr (Assoc));
+         Disp_Token (Ctxt, Tok_When);
+         Disp_Choice (Ctxt, Assoc);
+      end loop;
+      Disp_Token (Ctxt, Tok_Semi_Colon);
+   end Disp_Selected_Expressions;
+
+   procedure Disp_Selected_Variable_Assignment
+     (Ctxt : in out Ctxt_Class; Stmt: Iir) is
+   begin
+      Start_Hbox (Ctxt);
+      Disp_Label (Ctxt, Stmt);
+      Disp_Token (Ctxt, Tok_With);
+      Print (Ctxt, Get_Expression (Stmt));
+      Disp_Token (Ctxt, Tok_Select);
+      Print (Ctxt, Get_Target (Stmt));
+      Disp_Token (Ctxt, Tok_Assign);
+      Disp_Selected_Expressions (Ctxt, Stmt);
+      Close_Hbox (Ctxt);
+   end Disp_Selected_Variable_Assignment;
+
    procedure Disp_Postponed (Ctxt : in out Ctxt_Class; Stmt : Iir) is
    begin
       if Get_Postponed_Flag (Stmt) then
@@ -2857,6 +2980,7 @@ package body Vhdl.Prints is
       Disp_Token (Ctxt, Tok_With);
       Print (Ctxt, Get_Expression (Stmt));
       Disp_Token (Ctxt, Tok_Select);
+      Disp_Matching (Ctxt, Stmt);
       Print (Ctxt, Get_Target (Stmt));
       Disp_Token (Ctxt, Tok_Less_Equal);
       if Get_Guard (Stmt) /= Null_Iir then
@@ -3105,7 +3229,10 @@ package body Vhdl.Prints is
       Assoc: Iir;
       Sel_Stmt : Iir;
    begin
+      Start_Hbox (Ctxt);
+      Disp_Label (Ctxt, Stmt);
       Disp_Token (Ctxt, Tok_Case);
+      Disp_Matching (Ctxt, Stmt);
       Print (Ctxt, Get_Expression (Stmt));
       Close_Hbox (Ctxt);
       Start_Hbox (Ctxt);
@@ -3128,7 +3255,7 @@ package body Vhdl.Prints is
       end loop;
       Close_Vbox (Ctxt);
 
-      Disp_End_Label_No_Close (Ctxt, Stmt, Tok_Case);
+      Disp_End_Label (Ctxt, Stmt, Tok_Case, With_Matching => True);
    end Disp_Case_Statement;
 
    procedure Disp_Wait_Statement
@@ -3171,6 +3298,7 @@ package body Vhdl.Prints is
       Clause := Stmt;
       Print (Ctxt, Get_Condition (Clause));
       Close_Hbox (Ctxt);
+
       Start_Hbox (Ctxt);
       Disp_Token (Ctxt, Tok_Then);
       Close_Hbox (Ctxt);
@@ -3322,6 +3450,8 @@ package body Vhdl.Prints is
                Disp_Variable_Assignment (Ctxt, Stmt);
             when Iir_Kind_Conditional_Variable_Assignment_Statement =>
                Disp_Conditional_Variable_Assignment (Ctxt, Stmt);
+            when Iir_Kind_Selected_Variable_Assignment_Statement =>
+               Disp_Selected_Variable_Assignment (Ctxt, Stmt);
             when Iir_Kind_Assertion_Statement =>
                Disp_Assertion_Statement (Ctxt, Stmt);
             when Iir_Kind_Report_Statement =>
@@ -3336,10 +3466,7 @@ package body Vhdl.Prints is
                Disp_Token (Ctxt, Tok_Semi_Colon);
                Close_Hbox (Ctxt);
             when Iir_Kind_Case_Statement =>
-               Start_Hbox (Ctxt);
-               Disp_Label (Ctxt, Stmt);
                Disp_Case_Statement (Ctxt, Stmt);
-               Close_Hbox (Ctxt);
             when Iir_Kind_Wait_Statement =>
                Disp_Wait_Statement (Ctxt, Stmt);
             when Iir_Kind_Procedure_Call_Statement =>
@@ -3397,10 +3524,13 @@ package body Vhdl.Prints is
          Disp_Designator_List (Ctxt, Get_Sensitivity_List (Process));
          Disp_Token (Ctxt, Tok_Right_Paren);
       end if;
-      if Get_Has_Is (Process) then
-         Disp_Token (Ctxt, Tok_Is);
-      end if;
       Close_Hbox (Ctxt);
+
+      if Get_Has_Is (Process) then
+         Start_Hbox (Ctxt);
+         Disp_Token (Ctxt, Tok_Is);
+         Close_Hbox (Ctxt);
+      end if;
 
       Start_Vbox (Ctxt);
       Disp_Declaration_Chain (Ctxt, Process);
@@ -3507,13 +3637,6 @@ package body Vhdl.Prints is
       end loop;
       Disp_Token (Ctxt, Tok_Right_Paren);
    end Disp_Association_Chain;
-
-   procedure Disp_Generic_Map_Aspect
-     (Ctxt : in out Ctxt_Class; Parent : Iir) is
-   begin
-      Disp_Token (Ctxt, Tok_Generic, Tok_Map);
-      Disp_Association_Chain (Ctxt, Get_Generic_Map_Aspect_Chain (Parent));
-   end Disp_Generic_Map_Aspect;
 
    procedure Disp_Port_Map_Aspect (Ctxt : in out Ctxt_Class; Parent : Iir) is
    begin
@@ -3997,7 +4120,7 @@ package body Vhdl.Prints is
       Clause := Stmt;
       loop
          Bod := Get_Generate_Statement_Body (Clause);
-         if Get_Has_Label (Bod) then
+         if Has_User_Label (Bod) then
             Disp_Ident (Ctxt, Get_Alternative_Label (Bod));
             Disp_Token (Ctxt, Tok_Colon);
          end if;
@@ -4042,7 +4165,7 @@ package body Vhdl.Prints is
          Start_Hbox (Ctxt);
          Disp_Token (Ctxt, Tok_When);
          Bod := Get_Associated_Block (Assoc);
-         if Get_Has_Label (Bod) then
+         if Has_User_Label (Bod) then
             Disp_Ident (Ctxt, Get_Alternative_Label (Bod));
             Disp_Token (Ctxt, Tok_Colon);
          end if;
@@ -4744,6 +4867,54 @@ package body Vhdl.Prints is
       end if;
    end Print_Qualified_Expression;
 
+   procedure Print_External_Name (Ctxt : in out Ctxt_Class; Name : Iir)
+   is
+      Path : Iir;
+      Expr : Iir;
+   begin
+      Disp_Token (Ctxt, Tok_Double_Less);
+      case Iir_Kinds_External_Name (Get_Kind (Name)) is
+         when Iir_Kind_External_Signal_Name =>
+            Disp_Token (Ctxt, Tok_Signal);
+         when Iir_Kind_External_Variable_Name =>
+            Disp_Token (Ctxt, Tok_Variable);
+         when Iir_Kind_External_Constant_Name =>
+            Disp_Token (Ctxt, Tok_Constant);
+      end case;
+
+      Path := Get_External_Pathname (Name);
+      loop
+         case Get_Kind (Path) is
+            when Iir_Kind_Package_Pathname =>
+               Disp_Token (Ctxt, Tok_Arobase);
+               Disp_Identifier (Ctxt, Path);
+            when Iir_Kind_Absolute_Pathname =>
+               --  The dot will be printed as the separator.
+               null;
+            when Iir_Kind_Relative_Pathname =>
+               Disp_Token (Ctxt, Tok_Caret);
+            when Iir_Kind_Pathname_Element =>
+               Disp_Identifier (Ctxt, Path);
+               Expr := Get_Pathname_Expression (Path);
+               if Expr /= Null_Iir then
+                  Disp_Token (Ctxt, Tok_Left_Paren);
+                  Print (Ctxt, Expr);
+                  Disp_Token (Ctxt, Tok_Right_Paren);
+               end if;
+            when others =>
+               raise Internal_Error;
+         end case;
+
+         Path := Get_Pathname_Suffix (Path);
+         exit when Path = Null_Iir;
+         Disp_Token (Ctxt, Tok_Dot);
+      end loop;
+
+      Disp_Token (Ctxt, Tok_Colon);
+      Disp_Subtype_Indication (Ctxt, Get_Subtype_Indication (Name));
+      Disp_Token (Ctxt, Tok_Double_Greater);
+   end Print_External_Name;
+
    procedure Print (Ctxt : in out Ctxt_Class; Expr: Iir)
    is
       Orig : Iir;
@@ -4906,6 +5077,9 @@ package body Vhdl.Prints is
          when Iir_Kind_Ascending_Type_Attribute =>
             Disp_Name_Attribute (Ctxt, Expr, Name_Ascending);
 
+         when Iir_Kind_Converse_Attribute =>
+            Disp_Name_Attribute (Ctxt, Expr, Name_Converse);
+
          when Iir_Kind_Nature_Reference_Attribute =>
             Disp_Name_Attribute (Ctxt, Expr, Name_Reference);
          when Iir_Kind_Across_Attribute =>
@@ -5034,6 +5208,8 @@ package body Vhdl.Prints is
          when Iir_Kind_Parenthesis_Name =>
             Print (Ctxt, Get_Prefix (Expr));
             Disp_Association_Chain (Ctxt, Get_Association_Chain (Expr));
+         when Iir_Kinds_External_Name =>
+            Print_External_Name (Ctxt, Expr);
          when Iir_Kind_Base_Attribute =>
             Disp_Name_Attribute (Ctxt, Expr, Name_Base);
          when Iir_Kind_Subtype_Attribute =>
@@ -5138,11 +5314,11 @@ package body Vhdl.Prints is
    function Need_Space (Tok, Prev_Tok : Token_Type) return Boolean is
    begin
       if Prev_Tok = Tok_Newline then
+         --  No space after newline.
          return False;
       elsif Prev_Tok >= Tok_First_Keyword then
          --  A space after a keyword.
          if Tok /= Tok_Semi_Colon
-           and Tok /= Tok_Dot
            and Tok /= Tok_Right_Paren
          then
             return True;
@@ -5151,6 +5327,7 @@ package body Vhdl.Prints is
          --  Space before a keyword.
          if Prev_Tok /= Tok_Dot
            and Prev_Tok /= Tok_Left_Paren
+           and Prev_Tok /= Tok_Double_Less
          then
             return True;
          end if;
@@ -5242,7 +5419,7 @@ package body Vhdl.Prints is
       is
          pragma Unreferenced (Ctxt);
       begin
-         Simple_IO.Put (C);
+         Outputs.Wr (C);
       end Put;
 
       procedure Start_Hbox (Ctxt : in out Simple_Ctxt) is
@@ -5461,6 +5638,10 @@ package body Vhdl.Prints is
             | Iir_Kind_Free_Quantity_Declaration
             | Iir_Kinds_Source_Quantity_Declaration =>
             Disp_Object_Declaration (Ctxt, N);
+         when Iir_Kind_Object_Alias_Declaration =>
+            Disp_Object_Alias_Declaration (Ctxt, N);
+         when Iir_Kind_Non_Object_Alias_Declaration =>
+            Disp_Non_Object_Alias_Declaration (Ctxt, N);
          when Iir_Kind_Type_Declaration =>
             Disp_Type_Declaration (Ctxt, N);
          when Iir_Kind_Subtype_Declaration =>
@@ -5470,6 +5651,8 @@ package body Vhdl.Prints is
             Disp_Name_Of (Ctxt, N);
             --  FIXME: need first interface.
             Disp_Interface_Mode_And_Type (Ctxt, N);
+         when Iir_Kind_Iterator_Declaration =>
+            Disp_Parameter_Specification (Ctxt, N);
          when Iir_Kind_Function_Declaration
            | Iir_Kind_Procedure_Declaration =>
             Disp_Subprogram_Declaration (Ctxt, N, False);
@@ -5485,7 +5668,7 @@ package body Vhdl.Prints is
 
    function Allocate_Handle return Vstring_Acc is
    begin
-      return new Grt.Vstrings.Vstring;
+      return new Grt.Vstrings.Vstring (32);
    end Allocate_Handle;
 
    function Get_Length (Handle : Vstring_Acc) return Natural is

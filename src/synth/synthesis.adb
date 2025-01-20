@@ -28,6 +28,7 @@ pragma Unreferenced (Elab.Vhdl_Values.Debug);
 with Elab.Vhdl_Objtypes; use Elab.Vhdl_Objtypes;
 
 with Synth.Vhdl_Insts; use Synth.Vhdl_Insts;
+with Synth.Verilog_Insts;
 
 package body Synthesis is
    function Make_Base_Instance return Base_Instance_Acc
@@ -48,7 +49,7 @@ package body Synthesis is
 
    function Synth_Design (Design : Iir;
                           Inst : Synth_Instance_Acc;
-                          Encoding : Name_Encoding) return Module
+                          Encoding : Name_Encoding) return Base_Instance_Acc
    is
       Base : Base_Instance_Acc;
       Unit : Iir;
@@ -77,11 +78,13 @@ package body Synthesis is
 
       pragma Assert (Is_Expr_Pool_Empty);
 
+      Synth.Verilog_Insts.Synth_All_Instances;
+
       if Errorout.Nbr_Errors > 0 then
-         return No_Module;
+         return null;
       end if;
 
-      return Base.Top_Module;
+      return Base;
    end Synth_Design;
 
    procedure Instance_Passes (Ctxt : Context_Acc; M : Module) is

@@ -270,48 +270,33 @@ package body Netlists.Folds is
    end Build2_Resize;
 
    function Build2_Extract
-     (Ctxt : Context_Acc; I : Net; Off, W : Width) return Net is
-   begin
-      if Off = 0 and then W = Get_Width (I) then
-         return I;
-      else
-         return Build_Extract (Ctxt, I, Off, W);
-      end if;
-   end Build2_Extract;
-
-   function Build2_Extract_Push
      (Ctxt : Context_Acc; I : Net; Off, W : Width) return Net
    is
-      Inst : constant Instance := Get_Net_Parent (I);
-      Res : Net;
+      Parent : Instance;
    begin
       if Off = 0 and then W = Get_Width (I) then
+         --  No extraction, full input.
          return I;
       end if;
 
-      case Get_Id (Inst) is
-         when Id_Extract =>
-            return Build2_Extract_Push
-              (Ctxt, Get_Input_Net (Inst, 0),
-               Off + Get_Param_Uns32 (Inst, 0), W);
-         when Id_Mux2 =>
-            Res := Build_Mux2
-              (Ctxt,
-               Get_Input_Net (Inst, 0),
-               Build2_Extract_Push (Ctxt, Get_Input_Net (Inst, 1), Off, W),
-               Build2_Extract_Push (Ctxt, Get_Input_Net (Inst, 2), Off, W));
-            Set_Location (Res, Get_Location (Inst));
-            return Res;
-         when others =>
-            return Build_Extract (Ctxt, I, Off, W);
-      end case;
-   end Build2_Extract_Push;
+      Parent := Get_Net_Parent (I);
+      if Get_Id (Parent) = Id_Extract then
+         --  Merge extract of extract.
+         return Build2_Extract
+           (Ctxt,
+            Get_Input_Net (Parent, 0),
+            Off + Get_Param_Uns32 (Parent, 0), W);
+      end if;
+
+      return Build_Extract (Ctxt, I, Off, W);
+   end Build2_Extract;
 
    function Build2_Imp (Ctxt : Context_Acc; A, B : Net; Loc : Location_Type)
                        return Net
    is
       N : Net;
    begin
+      --  a -> b  <=>  (not a) or b
       N := Build_Monadic (Ctxt, Id_Not, A);
       Set_Location (N, Loc);
       N := Build_Dyadic (Ctxt, Id_Or, N, B);
@@ -385,4 +370,57 @@ package body Netlists.Folds is
       return Get_Net_Parent (Res);
    end Add_Enable_To_Dyn_Insert;
 
+   function Build2_Canon_And (Ctxt : Context_Acc;
+                              R, L : Net;
+                              Keep : Boolean) return Net
+   is
+      Inst_L, Inst_R : Instance;
+      Inst_Pp : Instance;
+      E, N : Net;
+   begin
+      --  Swap R and L
+      if Get_Id (Get_Net_Parent (R)) in Edge_Module_Id then
+         return Build_Dyadic (Ctxt, Id_And, R, L);
+      end if;
+
+      --  L = Edge and X
+      --  Rotate with L parent: result = Edge and (R and X)
+      Inst_L := Get_Net_Parent (L);
+      if Get_Id (Inst_L) = Id_And then
+         E := Get_Input_Net (Inst_L, 0);
+         Inst_Pp := Get_Net_Parent (E);
+         if Get_Id (Inst_Pp) in Edge_Module_Id then
+            if Keep then
+               N := Build_Dyadic (Ctxt, Id_And, R, Get_Input_Net (Inst_L, 1));
+               Set_Location (N, Get_Location (Inst_L));
+            else
+               E := Disconnect_And_Get (Inst_L, 0);
+               Connect (Get_Input (Inst_L, 0), R);
+               N := L;
+            end if;
+            return Build_Dyadic (Ctxt, Id_And, E, N);
+         end if;
+      end if;
+
+      --  R = Edge and X
+      --  Rotate with R parent: result = Edge and (L and X)
+      Inst_R := Get_Net_Parent (R);
+      if Get_Id (Inst_R) = Id_And then
+         E := Get_Input_Net (Inst_R, 0);
+         Inst_Pp := Get_Net_Parent (E);
+         if Get_Id (Inst_Pp) in Edge_Module_Id then
+            if Keep then
+               N := Build_Dyadic (Ctxt, Id_And, L, Get_Input_Net (Inst_R, 1));
+               Set_Location (N, Get_Location (Inst_R));
+            else
+               E := Disconnect_And_Get (Inst_R, 0);
+               Connect (Get_Input (Inst_R, 0), L);
+               N := R;
+            end if;
+            return Build_Dyadic (Ctxt, Id_And, E, N);
+         end if;
+      end if;
+
+      return Build_Dyadic (Ctxt, Id_And, L, R);
+   end Build2_Canon_And;
 end Netlists.Folds;

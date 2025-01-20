@@ -14,10 +14,10 @@
 --  You should have received a copy of the GNU General Public License
 --  along with this program.  If not, see <gnu.org/licenses>.
 
-with GNAT.OS_Lib;
 with Simple_IO;
 with Name_Table;
 with Files_Map; use Files_Map;
+with Filesystem;
 with Flags; use Flags;
 
 package body Errorout.Console is
@@ -29,7 +29,7 @@ package body Errorout.Console is
    --  Set Flag_Color_Diagnostics to On or Off if is was Auto.
    procedure Detect_Terminal
    is
-      use GNAT.OS_Lib;
+      use Filesystem;
 
       --  Import isatty.
       function isatty (Fd : Integer) return Integer;
@@ -37,9 +37,9 @@ package body Errorout.Console is
 
       --  Awful way to detect if the host is Windows.  Should be replaced by
       --  a host-specific package.
-      Is_Windows : constant Boolean := GNAT.OS_Lib.Directory_Separator = '\';
+      Is_Windows : constant Boolean := Get_Directory_Separator = '\';
 
-      V : String_Access;
+      V : String_Acc;
    begin
       if Flag_Color_Diagnostics /= Auto then
          return;
@@ -60,7 +60,7 @@ package body Errorout.Console is
             return;
          end if;
 
-         V := GNAT.OS_Lib.Getenv ("TERM");
+         V := Getenv ("TERM");
          if V = null or else V.all = "dumb" then
             --  No color if TERM=dumb
             --  Should we use a black list, or a white list or terminfo ?
@@ -129,6 +129,12 @@ package body Errorout.Console is
    begin
       Program_Name := new String'(Name);
    end Set_Program_Name;
+
+   procedure Set_Program_Name_With_Len
+     (Str : Thin_String_Ptr; Len : Natural) is
+   begin
+      Program_Name := new String'(Str (1 .. Len));
+   end Set_Program_Name_With_Len;
 
    procedure Disp_Program_Name is
    begin
@@ -215,6 +221,7 @@ package body Errorout.Console is
             end if;
             if Msg_Len = 0
               or else Flag_Color_Diagnostics = On
+              or else Flag_Caret_Diagnostics
             then
                --  'error:' is displayed only if not location is present, or
                --  if messages are colored.

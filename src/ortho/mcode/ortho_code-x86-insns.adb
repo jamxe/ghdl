@@ -169,9 +169,11 @@ package body Ortho_Code.X86.Insns is
                   Stack_Max := Stack_Offset;
                end if;
             when OD_Type
+              | OD_Completer
               | OD_Const
               | OD_Init_Val
               | OD_Var
+              | OD_Var_Body
               | OD_Function
               | OD_Procedure
               | OD_Interface
@@ -736,7 +738,6 @@ package body Ortho_Code.X86.Insns is
             return Best_Reg;
          when others =>
             Error_Reg ("alloc_reg: unknown reg", O_Enode_Null, Reg);
-            raise Program_Error;
       end case;
    end Alloc_Reg;
 

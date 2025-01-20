@@ -23,6 +23,10 @@ package Trans.Chap3 is
      (Decl : Iir; With_Vars : Boolean := True);
    procedure Elab_Object_Subtype_Indication (Decl : Iir);
 
+   --  Likewise, but for external names.
+   procedure Translate_External_Name_Subtype_Indication (Name : Iir);
+   procedure Elab_External_Name_Subtype_Indication (Name : Iir);
+
    --  Translate the subtype of a literal.
    --  This can be done not at declaration time, ie no variables are created
    --  for this subtype.
@@ -248,9 +252,6 @@ package Trans.Chap3 is
    function Array_Bounds_To_Element_Layout (B : Mnode; Arr_Type : Iir)
                                            return Mnode;
 
-   --  Deallocate OBJ.
-   procedure Gen_Deallocate (Obj : O_Enode);
-
    --  Performs deallocation of PARAM (the parameter of a deallocate call).
    procedure Translate_Object_Deallocation (Param : Iir);
 
@@ -288,7 +289,7 @@ package Trans.Chap3 is
 
    --  Allocate the base of an unbounded composite, whose length is
    --  determined from the bounds (already set).
-   --  RES_PTR is a pointer to the fat pointer (must be a stable variable: it
+   --  RES is the fat pointer (must be a stable variable: it
    --  can be referenced several times).
    --  ARR_TYPE is the type of the composite.
    procedure Allocate_Unbounded_Composite_Base (Alloc_Kind : Allocation_Kind;

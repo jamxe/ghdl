@@ -35,7 +35,7 @@ from typing import List
 from pyTooling.Decorators import export
 
 from pyVHDLModel.Symbol import Symbol
-from pyVHDLModel.Interface import GenericInterfaceItem, ParameterInterfaceItem
+from pyVHDLModel.Interface import GenericInterfaceItemMixin, ParameterInterfaceItemMixin
 from pyVHDLModel.Subprogram import Procedure as VHDLModel_Procedure, Function as VHDLModel_Function
 
 from pyGHDL.libghdl._types import Iir
@@ -52,10 +52,10 @@ class Function(VHDLModel_Function, DOMMixin):
         node: Iir,
         functionName: str,
         returnType: Symbol,
-        genericItems: List[GenericInterfaceItem] = None,
-        parameterItems: List[ParameterInterfaceItem] = None,
+        genericItems: List[GenericInterfaceItemMixin] = None,
+        parameterItems: List[ParameterInterfaceItemMixin] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(functionName, documentation)
         DOMMixin.__init__(self, node)
 
@@ -67,6 +67,7 @@ class Function(VHDLModel_Function, DOMMixin):
     @classmethod
     def parse(cls, functionNode: Iir) -> "Function":
         from pyGHDL.dom._Translate import (
+            GetName,
             GetGenericsFromChainedNodes,
             GetParameterFromChainedNodes,
         )
@@ -78,7 +79,7 @@ class Function(VHDLModel_Function, DOMMixin):
         parameters = GetParameterFromChainedNodes(nodes.Get_Interface_Declaration_Chain(functionNode))
 
         returnType = nodes.Get_Return_Type_Mark(functionNode)
-        returnTypeName = GetNameOfNode(returnType)
+        returnTypeName = GetName(returnType)
         returnTypeSymbol = SimpleSubtypeSymbol(returnType, returnTypeName)
 
         return cls(functionNode, functionName, returnTypeSymbol, generics, parameters, documentation)
@@ -90,10 +91,10 @@ class Procedure(VHDLModel_Procedure, DOMMixin):
         self,
         node: Iir,
         procedureName: str,
-        genericItems: List[GenericInterfaceItem] = None,
-        parameterItems: List[ParameterInterfaceItem] = None,
+        genericItems: List[GenericInterfaceItemMixin] = None,
+        parameterItems: List[ParameterInterfaceItemMixin] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(procedureName, documentation)
         DOMMixin.__init__(self, node)
 

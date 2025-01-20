@@ -92,6 +92,23 @@ package body Vhdl.Canon is
       Assoc := Get_Association_Choices_Chain (Aggr);
       if Get_Nbr_Elements (Get_Index_Subtype_List (Aggr_Type)) = Dim then
          while Assoc /= Null_Iir loop
+            case Get_Kind (Assoc) is
+               when Iir_Kind_Choice_By_Range =>
+                  declare
+                     Choice : constant Iir := Get_Choice_Range (Assoc);
+                  begin
+                     if Get_Kind (Choice) = Iir_Kind_Range_Expression then
+                        Canon_Extract_Sensitivity_Expression
+                          (Choice, Sensitivity_List, False);
+                     end if;
+                  end;
+               when Iir_Kind_Choice_By_Expression =>
+                  Canon_Extract_Sensitivity_Expression
+                    (Get_Choice_Expression (Assoc), Sensitivity_List, False);
+               when others =>
+                  null;
+            end case;
+
             Canon_Extract_Sensitivity_Expression
               (Get_Associated_Expr (Assoc), Sensitivity_List, Is_Target);
             Assoc := Get_Chain (Assoc);
@@ -106,12 +123,40 @@ package body Vhdl.Canon is
       end if;
    end Canon_Extract_Sensitivity_Aggregate;
 
+   procedure Sensitivity_Append (List : Iir_List; Expr : Iir) is
+   begin
+      Append_Element (List, Expr);
+   end Sensitivity_Append;
+
+   procedure Sensitivity_Append_Name (List : Iir_List; Name : Iir)
+   is
+      Obj : constant Node := Get_Named_Entity (Name);
+      El : Iir;
+      It : List_Iterator;
+   begin
+      It := List_Iterate (List);
+      while Is_Valid (It) loop
+         El := Get_Element (It);
+         --  Check if already present.
+         if Get_Kind (El) in Iir_Kinds_Denoting_Name
+           and then Get_Named_Entity (El) = Obj
+         then
+            return;
+         end if;
+         Next (It);
+      end loop;
+      Sensitivity_Append (List, Name);
+   end Sensitivity_Append_Name;
+
    procedure Canon_Extract_Sensitivity_Expression
      (Expr: Iir; Sensitivity_List: Iir_List; Is_Target: Boolean := False)
    is
       El : Iir;
    begin
-      if Get_Expr_Staticness (Expr) /= None then
+      if Expr = Null_Iir
+         or else Get_Expr_Staticness (Expr) /= None
+      then
+         --  In case of error, or trivially not a signal.
          return;
       end if;
 
@@ -119,12 +164,21 @@ package body Vhdl.Canon is
          when Iir_Kind_Overflow_Literal =>
             null;
 
+         when Iir_Kinds_Denoting_Name =>
+            if not Is_Target and then Is_Signal_Name (Expr) then
+               Sensitivity_Append_Name (Sensitivity_List, Expr);
+            else
+               --  For PSL endpoints
+               Canon_Extract_Sensitivity_Expression
+                 (Get_Named_Entity (Expr), Sensitivity_List, Is_Target);
+            end if;
+
          when Iir_Kind_Slice_Name =>
             if not Is_Target and then
               Get_Name_Staticness (Expr) >= Globally
             then
                if Is_Signal_Object (Expr) then
-                  Add_Element (Sensitivity_List, Expr);
+                  Sensitivity_Append (Sensitivity_List, Expr);
                end if;
             else
                declare
@@ -143,11 +197,11 @@ package body Vhdl.Canon is
             end if;
 
          when Iir_Kind_Selected_Element =>
-            if not Is_Target and then
-              Get_Name_Staticness (Expr) >= Globally
+            if not Is_Target
+              and then Get_Name_Staticness (Expr) >= Globally
             then
                if Is_Signal_Object (Expr) then
-                  Add_Element (Sensitivity_List, Expr);
+                  Sensitivity_Append (Sensitivity_List, Expr);
                end if;
             else
                Canon_Extract_Sensitivity_Expression
@@ -159,7 +213,7 @@ package body Vhdl.Canon is
               and then Get_Name_Staticness (Expr) >= Globally
             then
                if Is_Signal_Object (Expr) then
-                  Add_Element (Sensitivity_List, Expr);
+                  Sensitivity_Append (Sensitivity_List, Expr);
                end if;
             else
                Canon_Extract_Sensitivity_Expression
@@ -205,6 +259,7 @@ package body Vhdl.Canon is
 
          when Iir_Kind_Dereference
            | Iir_Kind_Implicit_Dereference =>
+            --  Not possible (now).
             Canon_Extract_Sensitivity_Expression
               (Get_Prefix (Expr), Sensitivity_List, False);
 
@@ -237,6 +292,7 @@ package body Vhdl.Canon is
               (Get_Prefix (Expr), Sensitivity_List, False);
 
          when Iir_Kind_Interface_Signal_Declaration
+           | Iir_Kind_Interface_View_Declaration
            | Iir_Kind_Signal_Declaration
            | Iir_Kind_Guard_Signal_Declaration
            | Iir_Kinds_Signal_Attribute
@@ -251,7 +307,8 @@ package body Vhdl.Canon is
             --  implicit signal denoted by the attribute name to the
             --  sensitivity set; [...]
             if not Is_Target then
-               Add_Element (Sensitivity_List, Expr);
+               --  TODO: Check for duplicate ?
+               Sensitivity_Append (Sensitivity_List, Expr);
             end if;
 
          when Iir_Kind_Psl_Endpoint_Declaration =>
@@ -261,14 +318,14 @@ package body Vhdl.Canon is
             begin
                It := List_Iterate (List);
                while Is_Valid (It) loop
-                  Add_Element (Sensitivity_List, Get_Element (It));
+                  Sensitivity_Append_Name (Sensitivity_List, Get_Element (It));
                   Next (It);
                end loop;
             end;
 
          when Iir_Kind_Object_Alias_Declaration =>
             if not Is_Target and then Is_Signal_Object (Expr) then
-               Add_Element (Sensitivity_List, Expr);
+               Sensitivity_Append_Name (Sensitivity_List, Expr);
             end if;
 
          when Iir_Kind_Constant_Declaration
@@ -316,12 +373,8 @@ package body Vhdl.Canon is
                end case;
             end;
 
-         when Iir_Kind_Simple_Name
-           | Iir_Kind_Selected_Name
-           | Iir_Kind_Reference_Name =>
-            Canon_Extract_Sensitivity_Expression
-              (Get_Named_Entity (Expr), Sensitivity_List, Is_Target);
-
+         when Iir_Kind_Error =>
+            null;
          when others =>
             Error_Kind ("canon_extract_sensitivity", Expr);
       end case;
@@ -380,7 +433,7 @@ package body Vhdl.Canon is
            | Iir_Kind_Concurrent_Simple_Signal_Assignment =>
             Guard := Get_Guard (Stmt);
             if Guard /= Null_Iir then
-               Add_Element (List, Guard);
+               Sensitivity_Append (List, Guard);
             end if;
          when others =>
             null;
@@ -507,6 +560,23 @@ package body Vhdl.Canon is
                   Ce := Get_Chain (Ce);
                end loop;
             end;
+         when Iir_Kind_Selected_Variable_Assignment_Statement =>
+            declare
+               Ce : Iir;
+            begin
+               Canon_Extract_Sensitivity_Expression
+                 (Get_Expression (Stmt), List, False);
+               Canon_Extract_Sensitivity_Expression
+                 (Get_Target (Stmt), List, True);
+               Ce := Get_Selected_Expressions_Chain (Stmt);
+               while Ce /= Null_Iir loop
+                  Canon_Extract_Sensitivity_If_Not_Null
+                    (Get_Condition (Ce), List, False);
+                  Canon_Extract_Sensitivity_Expression
+                    (Get_Expression (Ce), List, False);
+                  Ce := Get_Chain (Ce);
+               end loop;
+            end;
 
          when Iir_Kind_Simple_Signal_Assignment_Statement =>
             --  LRM08 11.3
@@ -593,11 +663,25 @@ package body Vhdl.Canon is
             --    construct the union of the resulting sets.
             Canon_Extract_Sensitivity_Procedure_Call
               (Get_Procedure_Call (Stmt), List);
-         when Iir_Kind_Signal_Force_Assignment_Statement
-           | Iir_Kind_Signal_Release_Assignment_Statement
-           | Iir_Kind_Break_Statement
-           | Iir_Kind_Wait_Statement
-           | Iir_Kind_Suspend_State_Statement =>
+
+         when Iir_Kind_Suspend_State_Statement =>
+            --  Could happen when the procedure is called before its body
+            --  is analyzed.
+            --  FIXME: set suspend_flag during elaboration.
+            null;
+
+         when Iir_Kind_Signal_Force_Assignment_Statement =>
+            Canon_Extract_Sensitivity_Expression
+              (Get_Target (Stmt), List, True);
+            Canon_Extract_Sensitivity_Expression
+              (Get_Expression (Stmt), List, False);
+
+         when Iir_Kind_Signal_Release_Assignment_Statement =>
+            Canon_Extract_Sensitivity_Expression
+              (Get_Target (Stmt), List, True);
+
+         when Iir_Kind_Break_Statement
+           | Iir_Kind_Wait_Statement =>
             Error_Kind ("canon_extract_sensitivity_statement", Stmt);
       end case;
    end Canon_Extract_Sensitivity_Statement;
@@ -920,7 +1004,6 @@ package body Vhdl.Canon is
 
          when others =>
             Error_Kind ("canon_expression", Expr);
-            null;
       end case;
    end Canon_Expression;
 
@@ -973,8 +1056,10 @@ package body Vhdl.Canon is
    begin
       We := Waveform;
       while We /= Null_Iir loop
-         Canon_Extract_Sensitivity_Expression
-           (Get_We_Value (We), Sensitivity_List, False);
+         if Get_Kind (We) /= Iir_Kind_Unaffected_Waveform then
+            Canon_Extract_Sensitivity_Expression
+              (Get_We_Value (We), Sensitivity_List, False);
+         end if;
          We := Get_Chain (We);
       end loop;
    end Extract_Waveform_Sensitivity;
@@ -1012,6 +1097,7 @@ package body Vhdl.Canon is
       Assoc_El, Prev_Assoc_El, Next_Assoc_El : Iir;
       Formal : Iir;
       Assoc_Chain : Iir;
+      Default : Iir;
 
       Found : Boolean;
    begin
@@ -1095,6 +1181,19 @@ package body Vhdl.Canon is
          Set_Artificial_Flag (Assoc_El, True);
          Set_Whole_Association_Flag (Assoc_El, True);
          Location_Copy (Assoc_El, Loc);
+
+         if Get_Kind (Inter) in Iir_Kinds_Interface_Subprogram_Declaration then
+            Default := Get_Default_Subprogram (Inter);
+            if Default /= Null_Iir then
+               if Get_Kind (Default) /= Iir_Kind_Box_Name then
+                  Default := Get_Named_Entity (Default);
+                  if not Is_Error (Default) then
+                     Set_Use_Flag (Default, True);
+                  end if;
+               end if;
+               Set_Open_Actual (Assoc_El, Default);
+            end if;
+         end if;
 
          if Canon_Flag_Set_Assoc_Formals then
             Set_Formal (Assoc_El, Inter);
@@ -1234,6 +1333,47 @@ package body Vhdl.Canon is
       return Res;
    end Canon_Conditional_Variable_Assignment_Statement;
 
+   function Canon_Selected_Variable_Assignment_Statement (Stmt : Iir)
+                                                         return Iir
+   is
+      Target : constant Iir := Get_Target (Stmt);
+      Expr : Iir;
+      Asgn : Iir;
+      Res : Iir;
+      Choice : Iir;
+   begin
+      Res := Create_Iir (Iir_Kind_Case_Statement);
+      Location_Copy (Res, Stmt);
+      Set_Label (Res, Get_Label (Stmt));
+      Set_Suspend_Flag (Res, False);
+      Set_Expression (Res, Get_Expression (Stmt));
+      Set_Label (Res, Get_Label (Res));
+
+      Choice := Get_Selected_Expressions_Chain (Stmt);
+      Set_Case_Statement_Alternative_Chain (Res, Choice);
+
+      while Choice /= Null_Iir loop
+         if not Get_Same_Alternative_Flag (Choice) then
+            Asgn := Create_Iir (Iir_Kind_Variable_Assignment_Statement);
+            Location_Copy (Asgn, Choice);
+            Set_Parent (Asgn, Res);
+            Set_Target (Asgn, Target);
+            Expr := Get_Associated_Expr (Choice);
+            if Canon_Flag_Expressions then
+               Canon_Expression (Expr);
+            end if;
+            Set_Expression (Asgn, Expr);
+
+            Set_Associated_Chain (Choice, Asgn);
+            Set_Associated_Expr (Choice, Null_Iir);
+         end if;
+
+         Choice := Get_Chain (Choice);
+      end loop;
+
+      return Res;
+   end Canon_Selected_Variable_Assignment_Statement;
+
    function Canon_Conditional_Signal_Assignment_Statement (Stmt : Iir)
                                                          return Iir is
    begin
@@ -1291,6 +1431,9 @@ package body Vhdl.Canon is
             when Iir_Kind_Conditional_Variable_Assignment_Statement =>
                N_Stmt :=
                  Canon_Conditional_Variable_Assignment_Statement (Stmt);
+
+            when Iir_Kind_Selected_Variable_Assignment_Statement =>
+               N_Stmt := Canon_Selected_Variable_Assignment_Statement (Stmt);
 
             when Iir_Kind_Wait_Statement =>
                declare
@@ -1445,12 +1588,14 @@ package body Vhdl.Canon is
          case Get_Kind (Stmt) is
             when Iir_Kind_Simple_Signal_Assignment_Statement
                | Iir_Kind_Conditional_Signal_Assignment_Statement
+               | Iir_Kind_Selected_Waveform_Assignment_Statement
                | Iir_Kind_Signal_Force_Assignment_Statement
                | Iir_Kind_Signal_Release_Assignment_Statement =>
                null;
 
             when Iir_Kind_Variable_Assignment_Statement
-               | Iir_Kind_Conditional_Variable_Assignment_Statement =>
+               | Iir_Kind_Conditional_Variable_Assignment_Statement
+               | Iir_Kind_Selected_Variable_Assignment_Statement =>
                null;
 
             when Iir_Kind_If_Statement =>
@@ -1677,7 +1822,9 @@ package body Vhdl.Canon is
       --  when generating code at once for the whole design, otherwise this
       --  may create discrepencies in translate structures due to states.
       Is_Sensitized :=
-        (Get_Wait_State (Imp) = False) and Flags.Flag_Whole_Analyze;
+        Get_Kind (Imp) /= Iir_Kind_Interface_Procedure_Declaration
+        and then Get_Wait_State (Imp) = False
+        and then Flags.Flag_Whole_Analyze;
 
       --  LRM93 9.3
       --  The equivalent process statement has also no sensitivity list, an
@@ -1963,6 +2110,7 @@ package body Vhdl.Canon is
          Set_Parent (Stmt, Parent);
          Set_Sequential_Statement_Chain (Parent, Stmt);
          Location_Copy (Stmt, Conc_Stmt);
+         Set_Matching_Flag (Stmt, Get_Matching_Flag (Conc_Stmt));
 
          Set_Expression (Stmt, Expr);
 
@@ -2037,7 +2185,7 @@ package body Vhdl.Canon is
    is
       use PSL.Nodes;
       use PSL.NFAs;
-      Prop : PSL_Node;
+      Prop, Prop1 : PSL_Node;
       Fa : PSL_NFA;
       Final : NFA_State;
    begin
@@ -2047,15 +2195,19 @@ package body Vhdl.Canon is
       Set_Psl_Property (Stmt, Prop);
 
       --  Generate the NFA.
-      case Get_Kind (Prop) is
-         when N_Async_Abort
-            | N_Sync_Abort
-            | N_Abort =>
-            Prop := Get_Property (Prop);
-            Set_PSL_Abort_Flag (Stmt, True);
-         when others =>
-            null;
-      end case;
+      if Get_Kind (Prop) = N_Always then
+         Prop1 := Get_Property (Prop);
+         case Get_Kind (Prop1) is
+            when N_Async_Abort
+              | N_Sync_Abort
+              | N_Abort =>
+               Set_PSL_Abort (Stmt, Prop1);
+               --  Abort will be handled directly
+               Set_Skip_Flag (Prop1, True);
+            when others =>
+               null;
+         end case;
+      end if;
       Fa := PSL.Build.Build_FA (Prop);
       Set_PSL_NFA (Stmt, Fa);
 
@@ -2235,7 +2387,7 @@ package body Vhdl.Canon is
       Sensitivity_List := Get_Sensitivity_List (Stmt);
       if Sensitivity_List = Null_Iir_List and then Cond /= Null_Iir then
          Sensitivity_List := Create_Iir_List;
-         Canon_Extract_Sensitivity_Break_Statement (Cond, Sensitivity_List);
+         Canon_Extract_Sensitivity_Break_Statement (Stmt, Sensitivity_List);
       end if;
       Set_Sensitivity_List (Proc, Sensitivity_List);
       Set_Is_Ref (Proc, True);
@@ -3289,7 +3441,7 @@ package body Vhdl.Canon is
       --  package, the body of the instance should be appended to the package
       --  body.
       --  FIXME: generate only if generating code for this unit.
-      if Get_Macro_Expanded_Flag (Pkg)
+      if Get_Macro_Expand_Flag (Pkg)
         and then Get_Need_Body (Pkg)
         and then Instantiation_Needs_Immediate_Body_P (Decl)
       then
@@ -3331,7 +3483,8 @@ package body Vhdl.Canon is
                   --  This is a package instantiation...
                   Pkg_Spec := Get_Uninstantiated_Package_Decl (Pkg_Decl);
                   if Get_Need_Body (Pkg_Spec)
-                    and then Get_Macro_Expanded_Flag (Pkg_Spec)
+                    and then Get_Macro_Expand_Flag (Pkg_Spec)
+                    and then not Get_Immediate_Body_Flag (Pkg_Decl)
                   then
                      --  ... that needs a body.  Create the body.
                      Inst_Bod := Sem_Inst.Instantiate_Package_Body (Pkg_Decl);
@@ -3471,6 +3624,9 @@ package body Vhdl.Canon is
          when Iir_Kind_Terminal_Declaration =>
             null;
          when Iir_Kinds_Quantity_Declaration =>
+            null;
+
+         when Iir_Kind_Mode_View_Declaration =>
             null;
 
          when Iir_Kind_Psl_Default_Clock =>
@@ -3669,7 +3825,9 @@ package body Vhdl.Canon is
             | Iir_Kind_Psl_Default_Clock
             | Iir_Kind_Psl_Declaration
             | Iir_Kind_Psl_Endpoint_Declaration
-            | Iir_Kind_Simple_Simultaneous_Statement =>
+            | Iir_Kind_Simple_Simultaneous_Statement
+            | Iir_Kind_Simultaneous_If_Statement
+            | Iir_Kind_Simultaneous_Case_Statement =>
             null;
 
          when others =>

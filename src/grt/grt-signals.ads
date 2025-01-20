@@ -291,13 +291,6 @@ package Grt.Signals is
       Is_Drv_Forced : Boolean;
       Is_Eff_Forced : Boolean;
 
-      --  True if a force is being scheduled for the current cycle.
-      --  This flag is set when a force is applied and cleared when all force
-      --  are applied.  The purpose of it is to discard release for the same
-      --  cycle as force have the priority over release.
-      Is_Drv_Force_Scheduled : Boolean;
-      Is_Eff_Force_Scheduled : Boolean;
-
       --  Set only on an implicit signal when the signal will stay active on
       --  the next cycle.  For example, 'Quiet(0ns) or 'Stable(0ns) are
       --  generally active for 2 cycles, as they are first False and then True.
@@ -306,6 +299,13 @@ package Grt.Signals is
       --  Set if the signal has already been visited.  When outside of the
       --  algorithm that use it, it must be cleared.
       Seen : Boolean;
+
+      --  Temporary flags used during update
+      Is_Drv_Deposit : Boolean;
+      Is_Eff_Deposit : Boolean;
+
+      Unused1 : Boolean;
+      Unused2 : Boolean;
    end record;
    pragma Pack (Ghdl_Signal_Flags);
 
@@ -371,7 +371,9 @@ package Grt.Signals is
       Table_Low_Bound => 0,
       Table_Initial => 128);
 
-   -- Signals with RO_Event set. Cleared in Grt.Wave.Wave_Cycle.
+   --  A signal is added to this table when its RO_Event is set iff its
+   --  Dump_Table_Idx is not 0.
+   --  The user should flush it.
    package Changed_Sig_Table is new Grt.Table
      (Table_Component_Type => Ghdl_Signal_Ptr,
       Table_Index_Type => Natural,
@@ -451,6 +453,10 @@ package Grt.Signals is
       --  dependences.
       Imp_Delayed,
 
+      --  Implicit above.
+      --  No dependencies
+      Imp_Above,
+
       --  in_conversion.
       --  Pseudo-signal which is set by conversion function.
       In_Conversion,
@@ -474,6 +480,7 @@ package Grt.Signals is
            | Imp_Transaction
            | Imp_Stable
            | Imp_Delayed
+           | Imp_Above
            | Eff_Actual
            | Eff_One_Resolved
            | Drv_One_Resolved =>
@@ -524,7 +531,8 @@ package Grt.Signals is
 
    --  Set the effective value of signal SIG to VAL.
    --  If the value is different from the previous one, resume processes.
-   procedure Set_Effective_Value (Sig : Ghdl_Signal_Ptr; Val : Ghdl_Value_Ptr);
+   procedure Set_Effective_Value (Sig : Ghdl_Signal_Ptr;
+                                  Val : Value_Union);
 
    --  Add PROC in the list of processes to be resumed in case of event on
    --  SIG.
@@ -536,8 +544,8 @@ package Grt.Signals is
    --      the RTI for the whole signal (in particular the mode and the
    --      has_active flag)
    --  or
-   --  1b) call Ghdl_Signal_Set_Mode to register the mode and the has_active
-   --      flag.  In that case, the signal has no name.
+   --  1b) call Ghdl_Signal_Set_Mode_Kind to register the mode and the
+   --      has_active flag.  In that case, the signal has no name.
    --
    --  2) call Ghdl_Create_Signal_XXX for each non-composite element
 
@@ -545,9 +553,12 @@ package Grt.Signals is
                                    Ctxt : Ghdl_Rti_Access;
                                    Addr : System.Address);
 
-   procedure Ghdl_Signal_Set_Mode (Mode : Mode_Signal_Type;
-                                   Kind : Kind_Signal_Type;
-                                   Has_Active : Boolean);
+   procedure Ghdl_Signal_Set_Mode_Kind (Mode : Mode_Signal_Type;
+                                        Kind : Kind_Signal_Type;
+                                        Has_Active : Boolean);
+
+   --  Called by translate to set the mode of a view.
+   procedure Ghdl_Signal_Set_Mode (Mode : Ghdl_I32);
 
    --  FIXME: document.
    --  Merge RTI with SIG: adjust the has_active flag of SIG according to RTI.
@@ -614,10 +625,13 @@ package Grt.Signals is
    procedure Ghdl_Process_Add_Port_Driver
      (Sign : Ghdl_Signal_Ptr; Val : Value_Union);
 
-   procedure Ghdl_Signal_Force_Driving_Any (Sig : Ghdl_Signal_Ptr;
-                                            Val : Value_Union);
-   procedure Ghdl_Signal_Force_Effective_Any (Sig : Ghdl_Signal_Ptr;
-                                              Val : Value_Union);
+   type Force_Kind is (Force, Release, Deposite);
+   type Force_Mode is (Force_Effective, Force_Driving);
+
+   procedure Ghdl_Signal_Force_Any (Sig : Ghdl_Signal_Ptr;
+                                    Kind : Force_Kind;
+                                    Mode : Force_Mode;
+                                    Val : Value_Union);
 
    --  For B1
    function Ghdl_Create_Signal_B1 (Val_Ptr : Ghdl_Value_Ptr;
@@ -792,6 +806,14 @@ package Grt.Signals is
    procedure Ghdl_Signal_Add_Extra_Driver (Sign : Ghdl_Signal_Ptr;
                                            Val : Value_Union);
 
+   --  Add a driver for the kernel (only for AMS Domain signal).
+   procedure Ghdl_Signal_Add_Kernel_Driver (Sig : Ghdl_Signal_Ptr;
+                                            Init : Ghdl_E8);
+
+   --  Assign a value to a 'Above signal.
+   procedure Ghdl_Signal_Assign_Above (Sig : Ghdl_Signal_Ptr;
+                                       Val : Ghdl_B1);
+
    --  Conversions.  In order to do conversion from A to B, an intermediate
    --  signal T must be created.  The flow is A -> T -> B.
    --  The link from A -> T is a conversion, added by one of the two
@@ -853,6 +875,10 @@ package Grt.Signals is
    --  expression.
    procedure Ghdl_Signal_Guard_Dependence (Sig : Ghdl_Signal_Ptr);
 
+   --  Create 'Above signal.
+   function Ghdl_Create_Above_Signal
+     (Val_Ptr : Ghdl_Value_Ptr) return Ghdl_Signal_Ptr;
+
    --  Return number of ports/drivers.
    function Ghdl_Signal_Get_Nbr_Ports (Sig : Ghdl_Signal_Ptr)
                                       return Ghdl_Index_Type;
@@ -873,6 +899,9 @@ package Grt.Signals is
    Nbr_Events: Ghdl_I32;
    function Get_Nbr_Future return Ghdl_I32;
 private
+   pragma Export (C, Ghdl_Signal_Set_Mode,
+                  "__ghdl_signal_set_mode");
+
    pragma Export (C, Ghdl_Signal_Name_Rti,
                   "__ghdl_signal_name_rti");
    pragma Export (C, Ghdl_Signal_Merge_Rti,
@@ -1057,6 +1086,9 @@ private
                   "__ghdl_signal_attribute_register_prefix");
    pragma Export (C, Ghdl_Create_Delayed_Signal,
                   "__ghdl_create_delayed_signal");
+
+   pragma Export (C, Ghdl_Create_Above_Signal,
+                  "__ghdl_create_above_signal");
 
    pragma Export (Ada, Ghdl_Signal_Create_Guard,
                   "__ghdl_signal_create_guard");

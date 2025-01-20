@@ -21,10 +21,10 @@ package Translation is
    --  Initialize the package: create internal nodes.
    procedure Initialize;
 
-   --  Translate (generate code) for design unit UNIT.
+   --  Translate (generate code) for library unit LIB_UNIT.
    --  If MAIN is true, the unit is really the unit being compiled (not an
    --  external unit).  Code shouldn't be generated for external units.
-   procedure Translate (Unit : Iir_Design_Unit; Main : Boolean);
+   procedure Translate (Lib_Unit : Iir; Main : Boolean);
 
    --  Translate std.standard.
    procedure Translate_Standard (Main : Boolean);
@@ -53,6 +53,10 @@ package Translation is
 
    --  If set, do not generate code for unused implicit subprograms.
    Flag_Discard_Unused_Implicit : Boolean := False;
+
+   --  If set, generate statement body not marked used are discarded.
+   --  (can only be used with pre-elaboration).
+   Flag_Discard_Unused_Generate : Boolean := False;
 
    --  If set, dump drivers per process during compilation.
    Flag_Dump_Drivers : Boolean := False;

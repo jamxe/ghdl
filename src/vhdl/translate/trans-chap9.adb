@@ -34,6 +34,7 @@ with PSL.Errors; use PSL.Errors;
 
 with Trans_Analyzes;
 with Trans.Chap1;
+with Trans.Chap2;
 with Trans.Chap3;
 with Trans.Chap4;
 with Trans.Chap5;
@@ -174,8 +175,10 @@ package body Trans.Chap9 is
       Finish_Subprogram_Body;
    end Translate_Implicit_Guard_Signal;
 
-   procedure Translate_Component_Instantiation_Statement (Inst : Iir)
+   procedure Translate_Component_Instantiation_Statement
+     (Inst : Iir; Origin : Iir)
    is
+      Hdr : constant Iir := Get_Instantiated_Header (Inst);
       Info : Block_Info_Acc;
       Ports : Iir;
 
@@ -188,25 +191,45 @@ package body Trans.Chap9 is
       Push_Identifier_Prefix (Mark, Get_Label (Inst));
       Num := 0;
 
+      if Is_Component_Instantiation (Inst) then
+         Ports := Get_Named_Entity (Get_Instantiated_Unit (Inst));
+      else
+         Ports := Get_Entity_From_Entity_Aspect (Get_Instantiated_Unit (Inst));
+      end if;
+
+      Assoc := Get_Generic_Map_Aspect_Chain (Inst);
+      Inter := Get_Generic_Chain (Ports);
+      while Assoc /= Null_Iir loop
+         if Get_Kind (Assoc) = Iir_Kind_Association_Element_Type then
+            Chap4.Translate_Interface_Type_Association
+              (Get_Association_Interface (Assoc, Inter), Assoc);
+            --  Elaboration of the type ??
+         end if;
+         Next_Association_Interface (Assoc, Inter);
+      end loop;
+
       --  Add a pointer to the instance.
       if Is_Component_Instantiation (Inst) then
          --  Via a component declaration.
          declare
-            Comp : constant Iir :=
-              Get_Named_Entity (Get_Instantiated_Unit (Inst));
-            Comp_Info : constant Comp_Info_Acc := Get_Info (Comp);
+            Comp_Info : constant Comp_Info_Acc := Get_Info (Ports);
          begin
             Info.Block_Link_Field := Add_Instance_Factory_Field
               (Create_Identifier_Without_Prefix (Inst),
                Get_Scope_Type (Comp_Info.Comp_Scope));
-            Ports := Comp;
          end;
       else
          --  Direct instantiation.
+         if Hdr /= Null_Iir
+           and then Get_Macro_Expand_Flag (Hdr)
+           and then Get_Parent (Hdr) /= Null_Iir
+         then
+            Chap1.Translate_Entity_Declaration (Hdr, Origin);
+         end if;
+
          Info.Block_Link_Field := Add_Instance_Factory_Field
            (Create_Identifier_Without_Prefix (Inst),
             Rtis.Ghdl_Component_Link_Type);
-         Ports := Get_Entity_From_Entity_Aspect (Get_Instantiated_Unit (Inst));
       end if;
 
       --  When conversions are used, the subtype of the actual (or of the
@@ -217,43 +240,48 @@ package body Trans.Chap9 is
       Assoc := Get_Port_Map_Aspect_Chain (Inst);
       Inter := Get_Port_Chain (Ports);
       while Assoc /= Null_Iir loop
-         if Get_Kind (Assoc) = Iir_Kind_Association_Element_By_Name then
-            declare
-               Act_Conv : constant Iir := Get_Actual_Conversion (Assoc);
-               Act_Type : constant Iir := Get_Type (Get_Actual (Assoc));
-               Form_Conv : constant Iir := Get_Formal_Conversion (Assoc);
-               Formal : constant Iir := Get_Formal (Assoc);
-               Need_Actual : constant Boolean := Act_Conv /= Null_Iir
-                 and then Is_Anonymous_Type_Definition (Act_Type);
-               Need_Formal : constant Boolean := Form_Conv /= Null_Iir
-                 and then Is_Anonymous_Type_Definition (Get_Type (Formal));
-            begin
-               if Need_Actual or Need_Formal then
-                  --  Lazy creation of the record.
-                  if not Has_Conv_Record then
-                     Has_Conv_Record := True;
-                     Push_Instance_Factory (Info.Block_Scope'Access);
-                  end if;
+         case Get_Kind (Assoc) is
+            when Iir_Kind_Association_Element_By_Name =>
+               declare
+                  Act_Conv : constant Iir := Get_Actual_Conversion (Assoc);
+                  Act_Type : constant Iir := Get_Type (Get_Actual (Assoc));
+                  Form_Conv : constant Iir := Get_Formal_Conversion (Assoc);
+                  Formal : constant Iir := Get_Formal (Assoc);
+                  Need_Actual : constant Boolean := Act_Conv /= Null_Iir
+                    and then Is_Anonymous_Type_Definition (Act_Type);
+                  Need_Formal : constant Boolean := Form_Conv /= Null_Iir
+                    and then Is_Anonymous_Type_Definition (Get_Type (Formal));
+               begin
+                  if Need_Actual or Need_Formal then
+                     --  Lazy creation of the record.
+                     if not Has_Conv_Record then
+                        Has_Conv_Record := True;
+                        Push_Instance_Factory (Info.Block_Scope'Access);
+                     end if;
 
-                  --  FIXME: handle with overload multiple case on the same
-                  --  formal.
-                  Push_Identifier_Prefix
-                    (Mark2,
-                     Get_Identifier
-                       (Get_Association_Interface (Assoc, Inter)), Num);
-                  Num := Num + 1;
-                  if Need_Actual then
-                     Chap3.Translate_Anonymous_Subtype_Definition
-                       (Act_Type, True);
+                     --  FIXME: handle with overload multiple case on the same
+                     --  formal.
+                     Push_Identifier_Prefix
+                       (Mark2,
+                        Get_Identifier
+                          (Get_Association_Interface (Assoc, Inter)), Num);
+                     Num := Num + 1;
+                     if Need_Actual then
+                        Chap3.Translate_Anonymous_Subtype_Definition
+                          (Act_Type, True);
+                     end if;
+                     if Need_Formal then
+                        Chap3.Translate_Anonymous_Subtype_Definition
+                          (Get_Type (Formal), True);
+                     end if;
+                     Pop_Identifier_Prefix (Mark2);
                   end if;
-                  if Need_Formal then
-                     Chap3.Translate_Anonymous_Subtype_Definition
-                       (Get_Type (Formal), True);
-                  end if;
-                  Pop_Identifier_Prefix (Mark2);
-               end if;
-            end;
-         end if;
+               end;
+            when Iir_Kind_Association_Element_Type =>
+               raise Internal_Error;
+            when others =>
+               null;
+         end case;
          Next_Association_Interface (Assoc, Inter);
       end loop;
       if Has_Conv_Record then
@@ -312,7 +340,10 @@ package body Trans.Chap9 is
             Sig := Get_Object_Prefix (Sig);
             pragma Assert
               (Get_Kind (Sig) /= Iir_Kind_Object_Alias_Declaration);
-            if not Get_After_Drivers_Flag (Sig) then
+            --  No direct drivers for external names.
+            if not Get_After_Drivers_Flag (Sig)
+              and then Get_Kind (Sig) /= Iir_Kind_External_Signal_Name
+            then
                Info.Process_Drivers (I).Var :=
                  Create_Var (Create_Var_Identifier (Sig, "_DDRV", I),
                              Chap4.Get_Object_Type
@@ -631,8 +662,8 @@ package body Trans.Chap9 is
          when Iir_Kind_Psl_Endpoint_Declaration =>
             null;
          when Iir_Kinds_Psl_Property_Directive =>
-            if Get_PSL_Abort_Flag (Stmt) then
-               Abort_Prop := Get_Psl_Property (Stmt);
+            Abort_Prop := Get_PSL_Abort (Stmt);
+            if Abort_Prop /= Null_PSL_Node then
                Has_Async_Abort := Is_Async_Abort (Abort_Prop);
                Has_Sync_Abort := not Has_Async_Abort;
             end if;
@@ -690,7 +721,6 @@ package body Trans.Chap9 is
             New_Assign_Stmt (New_Indexed_Element (Get_Var (Info.Psl_Vect_Var),
                                                   New_Obj_Value (Var_I)),
                              New_Lit (Std_Boolean_True_Node));
-            Inc_Var (Var_I);
          when others =>
             null;
       end case;
@@ -726,10 +756,9 @@ package body Trans.Chap9 is
 
          Start_If_Stmt
            (S_Blk,
-            New_Value
-              (New_Indexed_Element (Get_Var (Info.Psl_Vect_Var),
-               New_Lit (New_Index_Lit
-                 (Unsigned_64 (S_Num))))));
+            New_Value (New_Indexed_Element
+                         (Get_Var (Info.Psl_Vect_Var),
+                          New_Lit (New_Index_Lit (Unsigned_64 (S_Num))))));
 
          -- Get simplified state:
          --  - If in transient state -> In progress.
@@ -749,7 +778,7 @@ package body Trans.Chap9 is
             Cond := New_Monadic_Op
               (ON_Not,
                New_Value (New_Indexed_Element (New_Obj (Var_Nvec),
-                 New_Lit (D_Lit))));
+                                               New_Lit (D_Lit))));
             Cond := New_Dyadic_Op
               (ON_And, Cond, Translate_Psl_Expr (Get_Edge_Expr (E), False));
 
@@ -961,6 +990,10 @@ package body Trans.Chap9 is
       Info : Block_Info_Acc;
       Mark2 : Id_Mark_Type;
    begin
+      if Flag_Discard_Unused_Generate and then not Get_Use_Flag (Bod) then
+         return;
+      end if;
+
       Info := Add_Info (Bod, Kind_Block);
 
       Push_Identifier_Prefix (Mark2, Get_Alternative_Label (Bod));
@@ -1161,7 +1194,7 @@ package body Trans.Chap9 is
               | Iir_Kind_Psl_Endpoint_Declaration =>
                Translate_Psl_Directive_Declarations (El);
             when Iir_Kind_Component_Instantiation_Statement =>
-               Translate_Component_Instantiation_Statement (El);
+               Translate_Component_Instantiation_Statement (El, Origin);
             when Iir_Kind_Block_Statement =>
                Translate_Block_Statement (El, Origin);
             when Iir_Kind_For_Generate_Statement =>
@@ -1264,6 +1297,9 @@ package body Trans.Chap9 is
       Info : constant Block_Info_Acc := Get_Info (Bod);
       Prev_Subprg_Instance : Subprgs.Subprg_Instance_Stack;
    begin
+      if Flag_Discard_Unused_Generate and then not Get_Use_Flag (Bod) then
+         return;
+      end if;
       Subprgs.Push_Subprg_Instance (Info.Block_Scope'Access,
                                     Info.Block_Decls_Ptr_Type,
                                     Wki_Instance,
@@ -1321,6 +1357,18 @@ package body Trans.Chap9 is
               | Iir_Kind_Psl_Endpoint_Declaration =>
                Translate_Psl_Directive_Statement (Stmt, Base_Info);
             when Iir_Kind_Component_Instantiation_Statement =>
+               declare
+                  Hdr : constant Iir := Get_Instantiated_Header (Stmt);
+               begin
+                  if Hdr /= Null_Iir
+                    and then Get_Kind (Hdr) = Iir_Kind_Entity_Declaration
+                    and then Get_Macro_Expand_Flag (Hdr)
+                    and then Get_Parent (Hdr) /= Null_Iir
+                  then
+                     Chap1.Translate_Entity_Subprograms (Hdr);
+                  end if;
+               end;
+
                Chap4.Translate_Association_Subprograms
                  (Stmt, Block, Base_Block,
                   Get_Entity_From_Entity_Aspect
@@ -1916,7 +1964,7 @@ package body Trans.Chap9 is
                Open_Temp;
                Chap9.Destroy_Types (Sig);
                if Info.Process_Drivers (I).Var /= Null_Var then
-                  --  Elaborate direct driver.  Done only once.
+                  --  Elaborate direct driver.  Done only once per signal.
                   Chap4.Elab_Direct_Driver_Declaration_Storage (Base);
 
                   --  Initial value.
@@ -1939,6 +1987,7 @@ package body Trans.Chap9 is
                         Base_Type);
                   end if;
                end if;
+
                if Chap4.Has_Direct_Driver (Base) then
                   --  Signal has a direct driver.
                   Chap6.Translate_Direct_Driver (Sig, Sig_Node, Drv_Node);
@@ -2077,15 +2126,15 @@ package body Trans.Chap9 is
       Register_Signal_List (List, Ghdl_Process_Add_Sensitivity);
 
       --  Register async sensitivity.
-      if Get_Kind (Stmt) in Iir_Kinds_Psl_Property_Directive
-        and then Get_PSL_Abort_Flag (Stmt)
-      then
+      if Get_Kind (Stmt) in Iir_Kinds_Psl_Property_Directive then
          declare
             use PSL.Nodes;
-            Prop : constant PSL_Node := Get_Psl_Property (Stmt);
+            Prop : constant PSL_Node := Get_PSL_Abort (Stmt);
             List : Iir_List;
          begin
-            if PSL.Subsets.Is_Async_Abort (Prop) then
+            if Prop /= Null_PSL_Node
+              and then PSL.Subsets.Is_Async_Abort (Prop)
+            then
                List := Create_Iir_List;
                Vhdl.Canon_PSL.Canon_Extract_Sensitivity
                  (Get_Boolean (Prop), List);
@@ -2358,10 +2407,32 @@ package body Trans.Chap9 is
       declare
          use Chap5;
          Entity_Map : Map_Env;
+         Inst_Hdr : Iir;
       begin
+         --  If the entity has an instantiated header (because it has generic
+         --  packages), this instantiated header (in fact the instantiated
+         --  entity) needs to be used for the mapping as it has correct types.
+         --  Simply instantiate infos.
+         if Get_Kind (Mapping) = Iir_Kind_Component_Instantiation_Statement
+         then
+            Inst_Hdr := Get_Instantiated_Header (Mapping);
+            if Inst_Hdr = Null_Iir then
+               Inst_Hdr := Entity;
+            else
+               Push_Instantiate_Var_Scope
+                 (Entity_Info.Block_Scope'Access,
+                  Entity_Info.Block_Scope'Access);
+               Chap2.Instantiate_Info_Entity (Inst_Hdr);
+               Pop_Instantiate_Var_Scope
+                 (Entity_Info.Block_Scope'Access);
+            end if;
+         else
+            Inst_Hdr := Entity;
+         end if;
+
          Entity_Map.Scope_Ptr := Entity_Info.Block_Scope'Access;
          Set_Scope_Via_Param_Ptr (Entity_Map.Scope, Var_Sub);
-         Chap5.Elab_Map_Aspect (Entity, Mapping, Entity, Entity_Map);
+         Chap5.Elab_Map_Aspect (Inst_Hdr, Mapping, Inst_Hdr, Entity_Map);
          Clear_Scope (Entity_Map.Scope);
       end;
 

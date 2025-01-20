@@ -99,9 +99,6 @@ package body Vhdl.Sem_Decls is
          Set_Attr_Chain (Current_Signals_Region.Last_Attribute, Attr);
       end if;
       Current_Signals_Region.Last_Attribute := Attr;
-
-      Set_Attribute_Implicit_Declaration
-        (Attr, Current_Signals_Region.Implicit_Decl);
    end Add_Implicit_Declaration;
 
    --  Insert pending implicit declarations after the last analyzed LAST_DECL,
@@ -297,7 +294,8 @@ package body Vhdl.Sem_Decls is
          case Get_Kind (Inter) is
             when Iir_Kind_Interface_Constant_Declaration
               | Iir_Kind_Interface_Signal_Declaration =>
-               --  LRM 4.3.2  Interface declarations
+               --  LRM93 4.3.2  Interface declarations
+               --  LRM08/LRM19 6.5.2 Interface object declarations
                --  For an interface constant declaration or an interface
                --  signal declaration, the subtype indication must define
                --  a subtype that is neither a file type, an access type,
@@ -408,29 +406,14 @@ package body Vhdl.Sem_Decls is
                Set_Expr_Staticness (Inter, Globally);
             end if;
          when Port_Interface_List =>
-            case Get_Kind (Inter) is
-               when Iir_Kind_Interface_Signal_Declaration
-                 | Iir_Kind_Interface_Terminal_Declaration
-                 | Iir_Kind_Interface_Quantity_Declaration =>
-                  null;
-               when others =>
-                  if AMS_Vhdl then
-                     Error_Msg_Sem
-                       (+Inter,
-                        "port %n must be a signal, a terminal or a quantity",
-                        +Inter);
-                  else
-                     Error_Msg_Sem
-                       (+Inter, "port %n must be a signal", +Inter);
-                  end if;
-            end case;
+            --  Parse already check that ports are signals (or terminals or
+            --  quantities).
+            null;
          when Parameter_Interface_List =>
             if Get_Kind (Inter) = Iir_Kind_Interface_Variable_Declaration
               and then Interface_Kind = Function_Parameter_Interface_List
-              and then (
-                Vhdl_Std < Vhdl_19
-                or else Get_Pure_Flag (Get_Parent (Inter))
-              )
+              and then (Vhdl_Std < Vhdl_19
+                          or else Get_Pure_Flag (Get_Parent (Inter)))
             then
                Error_Msg_Sem (+Inter, "variable interface parameter are not "
                                 & "allowed for a function (use a constant)");
@@ -476,6 +459,118 @@ package body Vhdl.Sem_Decls is
             end case;
       end case;
    end Sem_Interface_Object_Declaration;
+
+   procedure Sem_Mode_View_Indication (Ind : Iir)
+   is
+      Name : Iir;
+      View : Iir;
+   begin
+      Name := Get_Name (Ind);
+      Name := Sem_Mode_View_Name (Name);
+      Set_Name (Ind, Name);
+
+      if Get_Subtype_Indication (Ind) /= Null_Iir then
+         --  TODO.
+         raise Internal_Error;
+      end if;
+
+      if Is_Error (Name) then
+         Set_Type (Ind, Error_Type);
+         return;
+      end if;
+
+      case Get_Kind (Name) is
+         when Iir_Kinds_Denoting_Name =>
+            View := Get_Named_Entity (Name);
+         when Iir_Kind_Converse_Attribute =>
+            View := Get_Named_Entity (Get_Prefix (Name));
+         when others =>
+            Error_Kind ("sem_mode_view_indication", Ind);
+      end case;
+
+      Set_Type
+        (Ind, Get_Type_Of_Subtype_Indication (Get_Subtype_Indication (View)));
+   end Sem_Mode_View_Indication;
+
+   procedure Sem_Interface_View_Declaration
+     (Inter, Last : Iir; Interface_Kind : Interface_Kind_Type)
+   is
+      A_View : Iir;
+      A_Type : Iir;
+   begin
+      --  Avoid the reanalysed duplicated types.
+      --  This is not an optimization, since the unanalysed type must have
+      --  been freed.
+      A_View := Get_Mode_View_Indication (Inter);
+      if A_View = Null_Iir then
+         if Last = Null_Iir or else not Get_Has_Identifier_List (Last) then
+            --  mode view indication was not parsed.
+            A_View := Create_Error_Type (Null_Iir);
+            Set_Mode_View_Indication (Inter, A_View);
+         else
+            pragma Assert (Get_Is_Ref (Inter));
+            A_Type := Get_Type (Last);
+            Set_Mode_View_Indication (Inter, Get_Mode_View_Indication (Last));
+         end if;
+      else
+         Sem_Mode_View_Indication (A_View);
+         A_Type := Get_Type (A_View);
+      end if;
+
+      Set_Name_Staticness (Inter, Locally);
+      Xref_Decl (Inter);
+
+      Set_Type (Inter, A_Type);
+
+      if not Is_Error (A_Type) then
+         Set_Type_Has_Signal (A_Type);
+
+         --  LRM19 6.5.2 Interface object declarations
+         --  For an interface constant declaration (...) or an interface
+         --  signal declaration, the subtype indication shall define
+         --  a subtype that is neither a file type, an access type,
+         --  nor a protected type.  Moreover, the subtype indication
+         --  must not denote a composite type with a subelement that
+         --  is a file type, an access type, or a protected type.
+         --
+         --  GHDL: this wording is not correct for a mode_view_indication.
+         Check_Signal_Type (Inter);
+      end if;
+
+      Sem_Scopes.Add_Name (Inter);
+
+      --  By default, interface are not static.
+      --  This may be changed just below.
+      Set_Expr_Staticness (Inter, None);
+
+      case Interface_Kind is
+         when Generic_Interface_List =>
+            --  LRM93 1.1.1
+            --  The generic list in the formal generic clause defines
+            --  generic constants whose values may be determined by the
+            --  environment.
+            if Get_Kind (Inter) /= Iir_Kind_Interface_Constant_Declaration then
+               Error_Msg_Sem (+Inter, "generic %n must be a constant", +Inter);
+            else
+               --   LRM93 7.4.2 (Globally static primaries)
+               --   3. a generic constant.
+               Set_Expr_Staticness (Inter, Globally);
+            end if;
+         when Port_Interface_List =>
+            --  Parse already check that ports are signals (or terminals or
+            --  quantities).
+            null;
+         when Parameter_Interface_List =>
+            --  By default, we suppose a subprogram read the activity of
+            --  a signal.
+            --  This will be adjusted when the body is analyzed.
+            if Get_Kind (Inter) = Iir_Kind_Interface_Signal_Declaration
+              and then Get_Mode (Inter) in Iir_In_Modes
+            then
+               Set_Has_Active_Flag (Inter, True);
+            end if;
+      end case;
+   end Sem_Interface_View_Declaration;
 
    procedure Sem_Interface_Terminal_Declaration (Inter, Last : Iir)
    is
@@ -573,9 +668,13 @@ package body Vhdl.Sem_Decls is
       Set_Type_Declarator (Def, Inter);
       Set_Type (Inter, Def);
       Set_Interface_Type_Definition (Inter, Def);
+
+      --  Default for uninstantiated interface types, modified during
+      --  instantiation.
       Set_Type_Staticness (Def, None);
       Set_Resolved_Flag (Def, False);
       Set_Signal_Type_Flag (Def, True);
+      Set_Constraint_State (Def, Fully_Constrained);
       Set_Has_Signal_Flag (Def, False);
 
       --  Create operations for the interface type.
@@ -599,9 +698,95 @@ package body Vhdl.Sem_Decls is
       Xref_Decl (Inter);
    end Sem_Interface_Type_Declaration;
 
-   procedure Sem_Interface_Subprogram_Declaration (Inter : Iir) is
+   --  LRM 4.10 Conformance rule
+   --  Two subprogram declarations are said to have conforming profiles if
+   --  and only if both are procedures or both are functions, the parameter
+   --  and result type profiles of the subprograms are the same and, at each
+   --  parameter position, the corresponding parameters have the same class
+   --  and mode.
+   function Is_Conforming_Profile (L, R : Iir) return Boolean
+   is
+      Inter_L, Inter_R : Iir;
+   begin
+      --  TODO: Skip aliases ?
+      --  TODO: Handle enumerations ?
+      --  TODO: what about generic subprograms ?
+
+      if Is_Function_Declaration (L) then
+         if not Is_Function_Declaration (R) then
+            return False;
+         end if;
+         if Get_Base_Type (Get_Return_Type (L))
+           /= Get_Base_Type (Get_Return_Type (R))
+         then
+            return False;
+         end if;
+      else
+         pragma Assert (Is_Procedure_Declaration (L));
+         if not Is_Procedure_Declaration (R) then
+            return False;
+         end if;
+      end if;
+
+      Inter_L := Get_Interface_Declaration_Chain (L);
+      Inter_R := Get_Interface_Declaration_Chain (R);
+      loop
+         exit when Inter_L = Null_Iir and Inter_R = Null_Iir;
+         if Inter_L = Null_Iir or Inter_R = Null_Iir then
+            return False;
+         end if;
+         --  Same parameter type profile.
+         if Get_Base_Type (Get_Type (Inter_L))
+           /= Get_Base_Type (Get_Type (Inter_R))
+         then
+            return False;
+         end if;
+
+         --  Same class.
+         if Get_Kind (Inter_L) /= Get_Kind (Inter_R) then
+            return False;
+         end if;
+
+         --  Same mode.
+         if Get_Mode (Inter_L) /= Get_Mode (Inter_R) then
+            return False;
+         end if;
+
+         Inter_L := Get_Chain (Inter_L);
+         Inter_R := Get_Chain (Inter_R);
+      end loop;
+      return True;
+   end Is_Conforming_Profile;
+
+   procedure Sem_Interface_Subprogram_Declaration (Inter : Iir)
+   is
+      Def : Iir;
+      Res : Iir;
    begin
       Sem_Subprogram_Specification (Inter);
+
+      Def := Get_Default_Subprogram (Inter);
+      if Def /= Null_Iir and then Get_Kind (Def) /= Iir_Kind_Box_Name then
+         Sem_Name (Def);
+         Res := Get_Named_Entity (Def);
+         case Get_Kind (Res) is
+            when Iir_Kind_Error =>
+               null;
+            when Iir_Kind_Overload_List =>
+               raise Internal_Error;
+            when Iir_Kinds_Subprogram_Declaration =>
+               if not Is_Conforming_Profile (Res, Inter) then
+                  Error_Msg_Sem (+Def, "different profile for %n", +Res);
+                  Res := Create_Error (Res);
+               end if;
+            when others =>
+               Error_Msg_Sem
+                 (+Def, "name %i doesn't denote a subprogram", +Def);
+               Res := Create_Error (Res);
+         end case;
+         Set_Named_Entity (Def, Res);
+      end if;
+
       Sem_Scopes.Add_Name (Inter);
       Xref_Decl (Inter);
    end Sem_Interface_Subprogram_Declaration;
@@ -626,8 +811,15 @@ package body Vhdl.Sem_Decls is
       Inter := Interface_Chain;
       while Inter /= Null_Iir loop
          case Iir_Kinds_Interface_Declaration (Get_Kind (Inter)) is
-            when Iir_Kinds_Interface_Object_Declaration =>
+            when Iir_Kind_Interface_Signal_Declaration
+              | Iir_Kind_Interface_Variable_Declaration
+              | Iir_Kind_Interface_Constant_Declaration
+              | Iir_Kind_Interface_File_Declaration
+              | Iir_Kind_Interface_Quantity_Declaration =>
                Sem_Interface_Object_Declaration (Inter, Last, Interface_Kind);
+               Last := Inter;
+            when Iir_Kind_Interface_View_Declaration =>
+               Sem_Interface_View_Declaration (Inter, Last, Interface_Kind);
                Last := Inter;
             when Iir_Kind_Interface_Terminal_Declaration =>
                Sem_Interface_Terminal_Declaration (Inter, Last);
@@ -953,6 +1145,73 @@ package body Vhdl.Sem_Decls is
       end if;
    end Sem_Object_Type_From_Value;
 
+   --  Return True if OBJ is global: its value is set during elaboration and
+   --  does not change.
+   --  False for constants declared within subprograms.
+   function Is_Global_Object (Obj : Iir) return Boolean
+   is
+      Parent : constant Iir := Get_Parent (Obj);
+   begin
+      case Get_Kind (Parent) is
+         when Iir_Kinds_Subprogram_Body =>
+            return False;
+         when Iir_Kind_Protected_Type_Body =>
+            --  Humm, depends of the object; let's be safe.
+            return False;
+         when Iir_Kind_Package_Declaration
+           | Iir_Kind_Package_Body
+           | Iir_Kind_Entity_Declaration
+           | Iir_Kind_Architecture_Body
+           | Iir_Kinds_Process_Statement
+           | Iir_Kind_Generate_Statement_Body
+           | Iir_Kind_Block_Statement
+           | Iir_Kinds_Verification_Unit =>
+            return True;
+         when others =>
+            Error_Kind ("is_dynamic_object", Parent);
+      end case;
+   end Is_Global_Object;
+
+   procedure Check_Object_Declaration (Decl : Iir)
+   is
+      Atype : constant Iir := Get_Type (Decl);
+   begin
+      case Get_Kind (Decl) is
+         when Iir_Kind_Constant_Declaration =>
+            null;
+
+         when Iir_Kind_Variable_Declaration
+           | Iir_Kind_Signal_Declaration
+           | Iir_Kind_Free_Quantity_Declaration =>
+            --  LRM93 3.2.1.1 / LRM08 5.3.2.2
+            --  For a variable or signal declared by an object declaration, the
+            --  subtype indication of the corresponding object declaration
+            --  must define a constrained array subtype.
+            declare
+               Ind : constant Iir := Get_Subtype_Indication (Decl);
+            begin
+               if not (Is_Valid (Ind)
+                         and then Kind_In (Ind, Iir_Kind_Subtype_Attribute,
+                                           Iir_Kind_Element_Attribute))
+                 and then not Is_Fully_Constrained_Type (Atype)
+               then
+                  Report_Start_Group;
+                  Error_Msg_Sem
+                    (+Decl,
+                     "declaration of %n with unconstrained %n is not allowed",
+                     (+Decl, +Atype));
+                  if Get_Default_Value (Decl) /= Null_Iir then
+                     Error_Msg_Sem (+Decl, "(even with a default value)");
+                  end if;
+                  Report_End_Group;
+               end if;
+            end;
+
+         when others =>
+            Error_Kind ("sem_object_declaration(2)", Decl);
+      end case;
+   end Check_Object_Declaration;
+
    --  LAST_DECL is set only if DECL is part of a list of declarations (they
    --  share the same type and the same default value).
    procedure Sem_Object_Declaration (Decl: Iir; Last_Decl : Iir)
@@ -1105,8 +1364,25 @@ package body Vhdl.Sem_Decls is
                   if Staticness < Globally then
                      Staticness := Globally;
                   end if;
+
+                  --  This is not in the LRM, but if a non-global constant
+                  --  is globally static, it could be used as a time parameter
+                  --  for 'Stable/'Delayed/'Quiet.
+                  if Staticness /= Locally and then not Is_Global_Object (Decl)
+                  then
+                     Staticness := None;
+                  end if;
                end if;
                Set_Expr_Staticness (Decl, Staticness);
+            end if;
+
+            --  LRM93 3.2.1.1
+            --  For a constant declared by an object declaration, the index
+            --  ranges are defined by the initial value, if the subtype of the
+            --  constant is unconstrained; otherwise they are defined by this
+            --  subtype.
+            if Default_Value /= Null_Iir then
+               Sem_Object_Type_From_Value (Decl, Default_Value);
             end if;
 
          when Iir_Kind_Signal_Declaration =>
@@ -1164,7 +1440,8 @@ package body Vhdl.Sem_Decls is
                   then
                      Warning_Msg_Sem
                        (Warnid_Elaboration, +Decl,
-                        "declaration of a protected type before the body");
+                        "declaration of a protected object before "
+                          & "the protected body");
                   end if;
                end;
             end if;
@@ -1176,47 +1453,7 @@ package body Vhdl.Sem_Decls is
             Error_Kind ("sem_object_declaration", Decl);
       end case;
 
-      case Get_Kind (Decl) is
-         when Iir_Kind_Constant_Declaration =>
-            --  LRM93 3.2.1.1
-            --  For a constant declared by an object declaration, the index
-            --  ranges are defined by the initial value, if the subtype of the
-            --  constant is unconstrained; otherwise they are defined by this
-            --  subtype.
-            if Default_Value /= Null_Iir then
-               Sem_Object_Type_From_Value (Decl, Default_Value);
-            end if;
-
-         when Iir_Kind_Variable_Declaration
-           | Iir_Kind_Signal_Declaration
-           | Iir_Kind_Free_Quantity_Declaration =>
-            --  LRM93 3.2.1.1 / LRM08 5.3.2.2
-            --  For a variable or signal declared by an object declaration, the
-            --  subtype indication of the corresponding object declaration
-            --  must define a constrained array subtype.
-            declare
-               Ind : constant Iir := Get_Subtype_Indication (Decl);
-            begin
-               if not (Is_Valid (Ind)
-                         and then Kind_In (Ind, Iir_Kind_Subtype_Attribute,
-                                           Iir_Kind_Element_Attribute))
-                 and then not Is_Fully_Constrained_Type (Atype)
-               then
-                  Report_Start_Group;
-                  Error_Msg_Sem
-                    (+Decl,
-                     "declaration of %n with unconstrained %n is not allowed",
-                     (+Decl, +Atype));
-                  if Default_Value /= Null_Iir then
-                     Error_Msg_Sem (+Decl, "(even with a default value)");
-                  end if;
-                  Report_End_Group;
-               end if;
-            end;
-
-         when others =>
-            Error_Kind ("sem_object_declaration(2)", Decl);
-      end case;
+      Check_Object_Declaration (Decl);
    end Sem_Object_Declaration;
 
    procedure Sem_File_Declaration (Decl: Iir_File_Declaration; Last_Decl : Iir)
@@ -1441,6 +1678,10 @@ package body Vhdl.Sem_Decls is
       Close_Declarative_Region;
 
       Name_Visible (Component);
+
+      if Component_Need_Instance (Component, False) then
+         Set_Macro_Expand_Flag (Component, True);
+      end if;
    end Sem_Component_Declaration;
 
    procedure Sem_Object_Alias_Declaration (Alias: Iir_Object_Alias_Declaration)
@@ -1817,13 +2058,12 @@ package body Vhdl.Sem_Decls is
    end Add_Aliases_For_Type_Alias;
 
    procedure Sem_Non_Object_Alias_Declaration
-     (Alias : Iir_Non_Object_Alias_Declaration)
+     (Alias : Iir_Non_Object_Alias_Declaration; Named_Entity : Iir)
    is
       use Std_Names;
-      N_Entity : constant Iir := Get_Named_Entity (Get_Name (Alias));
       Id : Name_Id;
    begin
-      case Get_Kind (N_Entity) is
+      case Get_Kind (Named_Entity) is
          when Iir_Kinds_Subprogram_Declaration
            | Iir_Kinds_Interface_Subprogram_Declaration =>
             --  LRM93 4.3.3.2  Non-Object Aliases
@@ -1850,7 +2090,8 @@ package body Vhdl.Sem_Decls is
          when Iir_Kinds_Object_Declaration =>
             raise Internal_Error;
          when Iir_Kind_Attribute_Declaration
-           | Iir_Kind_Component_Declaration =>
+           | Iir_Kind_Component_Declaration
+           | Iir_Kind_Package_Declaration =>
             null;
          when Iir_Kind_Terminal_Declaration =>
             --  TODO: should have Sem_Terminal_Alias_Declaration.
@@ -1861,8 +2102,10 @@ package body Vhdl.Sem_Decls is
          when Iir_Kind_Base_Attribute =>
             Error_Msg_Sem (+Alias, "base attribute not allowed in alias");
             return;
+         when Iir_Kind_Converse_Attribute =>
+            null;
          when others =>
-            Error_Kind ("sem_non_object_alias_declaration", N_Entity);
+            Error_Kind ("sem_non_object_alias_declaration", Named_Entity);
       end case;
 
       Id := Get_Identifier (Alias);
@@ -1872,7 +2115,7 @@ package body Vhdl.Sem_Decls is
             --  LRM 4.3.3  Alias declarations
             --  If the alias designator is a character literal, the
             --  name must denote an enumeration literal.
-            if Get_Kind (N_Entity) /= Iir_Kind_Enumeration_Literal then
+            if Get_Kind (Named_Entity) /= Iir_Kind_Enumeration_Literal then
                Error_Msg_Sem
                  (+Alias,
                   "alias of a character must denote an enumeration literal");
@@ -1887,12 +2130,12 @@ package body Vhdl.Sem_Decls is
             --  overloads the operator symbol.  In this latter case,
             --  the operator symbol and the function both must meet the
             --  requirements of 2.3.1.
-            if Get_Kind (N_Entity) /= Iir_Kind_Function_Declaration then
+            if Get_Kind (Named_Entity) /= Iir_Kind_Function_Declaration then
                Error_Msg_Sem
                  (+Alias, "alias of an operator must denote a function");
                return;
             end if;
-            Check_Operator_Requirements (Id, N_Entity);
+            Check_Operator_Requirements (Id, Named_Entity);
          when others =>
             null;
       end case;
@@ -1906,6 +2149,10 @@ package body Vhdl.Sem_Decls is
       Res : Iir;
    begin
       Xref_Decl (Alias);
+
+      --  Add the alias name now (so that visbility is checked) even if the
+      --  node could change.
+      Sem_Scopes.Add_Alias_Name (Alias);
 
       Name := Get_Name (Alias);
       case Get_Kind (Name) is
@@ -1927,6 +2174,21 @@ package body Vhdl.Sem_Decls is
          when Iir_Kind_Error =>
             pragma Assert (Flags.Flag_Force_Analysis);
             return Alias;
+         when Iir_Kinds_External_Name =>
+            declare
+               Implicit_Decl : Boolean;
+            begin
+               if Get_Kind (Get_Parent (Alias)) in Iir_Kinds_Subprogram_Body
+               then
+                  --  Create an implicit declaration for the external name,
+                  --  so that it will be elaborated at start.
+                  Implicit_Decl := True;
+               else
+                  Implicit_Decl := False;
+               end if;
+               Sem_External_Name (Name, not Implicit_Decl);
+               Sig := Null_Iir;
+            end;
          when others =>
             Sem_Name (Name);
             Sig := Null_Iir;
@@ -1958,8 +2220,7 @@ package body Vhdl.Sem_Decls is
 
       if Is_Object_Name (N_Entity) then
          --  Object alias declaration.
-
-         Sem_Scopes.Add_Name (Alias);
+         Sem_Scopes.Replace_Alias_Name (Alias, Alias);
          Name_Visible (Alias);
 
          if Sig /= Null_Iir then
@@ -1989,26 +2250,32 @@ package body Vhdl.Sem_Decls is
             Set_Signature_Prefix (Sig, Null_Iir);
          end if;
 
-         Sem_Scopes.Add_Name (Res);
+         Sem_Scopes.Replace_Alias_Name (Res, Alias);
          Name_Visible (Res);
 
          Free_Iir (Alias);
 
-         if Get_Kind (Name) in Iir_Kinds_Denoting_And_External_Name then
-            Sem_Non_Object_Alias_Declaration (Res);
-         else
-            Error_Msg_Sem
-              (+Name, "name of nonobject alias is not a name");
+         case Get_Kind (Name) is
+            when Iir_Kinds_Denoting_Name
+              | Iir_Kinds_External_Name =>
+               Sem_Non_Object_Alias_Declaration
+                 (Res, Get_Named_Entity (Get_Name (Res)));
+            when Iir_Kind_Converse_Attribute =>
+               --  Maybe other attributes ?
+               Sem_Non_Object_Alias_Declaration (Res, Name);
 
-            --  Create a simple name to an error node.
-            N_Entity := Create_Error (Name);
-            Name := Create_Iir (Iir_Kind_Simple_Name);
-            Location_Copy (Name, N_Entity);
-            Set_Identifier (Name, Get_Identifier (Res));  --  Better idea ?
-            Set_Named_Entity (Name, N_Entity);
-            Set_Base_Name (Name, Name);
-            Set_Name (Res, Name);
-         end if;
+            when others =>
+               Error_Msg_Sem (+Name, "name of nonobject alias is not a name");
+
+               --  Create a simple name to an error node.
+               N_Entity := Create_Error (Name);
+               Name := Create_Iir (Iir_Kind_Simple_Name);
+               Location_Copy (Name, N_Entity);
+               Set_Identifier (Name, Get_Identifier (Res));  --  Better idea ?
+               Set_Named_Entity (Name, N_Entity);
+               Set_Base_Name (Name, Name);
+               Set_Name (Res, Name);
+         end case;
 
          return Res;
       end if;
@@ -2316,6 +2583,237 @@ package body Vhdl.Sem_Decls is
       Sem_Scopes.Name_Visible (Decl);
    end Sem_Branch_Quantity_Declaration;
 
+   procedure Sem_Mode_View_Declaration (Decl : Iir)
+   is
+      Vtyp : Iir;
+      Vstyp : Iir;
+      El : Iir;
+      El_Decl : Iir;
+      Vtyp_Els, Def_List : Iir_Flist;
+      Pos : Natural;
+      Interp : Name_Interpretation_Type;
+   begin
+      Sem_Scopes.Add_Name (Decl);
+      Sem_Scopes.Name_Visible (Decl);
+      Xref_Decl (Decl);
+
+      --  Analyze subtype indication.
+      Vtyp := Get_Subtype_Indication (Decl);
+      if Vtyp /= Null_Iir then
+         Vtyp := Sem_Subtype_Indication (Vtyp);
+         Set_Subtype_Indication (Decl, Vtyp);
+         if Is_Error (Vtyp) then
+            Vtyp := Null_Iir;
+         end if;
+      end if;
+
+      if Vtyp /= Null_Iir then
+         --  LRM19 6.5.2 Interface object declarations
+         --  A mode view declaration declares a mode view for a composite
+         --  type of subtype.
+         --  [...]
+         --  The subtype indication of a mode view declaration shall denote
+         --  an unresolved record type of subtype.
+         Vstyp := Get_Type_Of_Subtype_Indication (Vtyp);
+
+         if Is_Record_Type (Vstyp) then
+            Vtyp_Els := Get_Elements_Declaration_List (Vstyp);
+         else
+            if not Is_Error (Vstyp) then
+               Error_Msg_Sem
+                 (+Vtyp, "mode view can only be declared for a record");
+            end if;
+            Vtyp_Els := Null_Iir_Flist;
+            Vstyp := Null_Iir;
+         end if;
+
+         --  LRM19 6.5.2 Interface object declarations
+         --  In a mode view declaration, it is an error if either resolution
+         --  function appears in the subtype indication or the subtype is
+         --  a resolved subtype.  However, the elements of a composite may be
+         --  resolved subtypes.
+         --
+         --  GHDL: check this isn't a self-contradiction.
+         if Vstyp /= Null_Iir
+           and then Get_Kind (Vstyp) = Iir_Kind_Record_Subtype_Definition
+         then
+            if Get_Resolution_Indication (Vstyp) /= Null_Iir then
+               Error_Msg_Sem
+                 (+Vtyp, "record of mode view cannot be resolved");
+            end if;
+         end if;
+      else
+         Vstyp := Null_Iir;
+      end if;
+
+      --  LRM19 6.5.2 Interface object declarations
+      --  For each record element simple name of the type or subtype, there
+      --  shall be a record element simlpe name in the mode view declaration
+      --  with the same simple name.
+      --
+      --  LRM19 14.4.2.6 Elaboration of a mode view declaration
+      --  After elaborating a mode view declaration it is an eror if any of
+      --  the subelements of a composite type do not have a mode.
+      --
+      --  GHDL: also check for duplicate.
+
+      --  Analyze simple_name of elements.
+      if Vtyp_Els /= Null_Iir_Flist then
+         Def_List := Create_Iir_Flist (Get_Nbr_Elements (Vtyp_Els));
+         Set_Elements_Definition_List (Decl, Def_List);
+
+         --  Create a temporary scope to speed-up search of record elements.
+         Open_Declarative_Region;
+         for I in Flist_First .. Flist_Last (Vtyp_Els) loop
+            El_Decl := Get_Nth_Element (Vtyp_Els, I);
+            Add_Name (El_Decl);
+         end loop;
+
+         El := Get_Elements_Definition_Chain (Decl);
+         while El /= Null_Iir loop
+            Interp := Get_Interpretation (Get_Identifier (El));
+            if not Valid_Interpretation (Interp) then
+               Error_Msg_Sem (+El, "%i is not declared", +El);
+               El_Decl := Null_Iir;
+            else
+               El_Decl := Get_Declaration (Interp);
+               Xref_Ref (El, El_Decl);
+
+               case Get_Kind (El_Decl) is
+                  when Iir_Kind_Element_Declaration
+                    | Iir_Kind_Record_Element_Constraint =>
+                     Pos := Natural (Get_Element_Position (El_Decl));
+                     if Get_Nth_Element (Def_List, Pos) /= Null_Iir then
+                        Error_Msg_Sem
+                          (+El, "element %i has already a mode", +El);
+                     else
+                        Set_Nth_Element (Def_List, Pos, El);
+                     end if;
+                     Set_Named_Entity (El, El_Decl);
+                  when others =>
+                     Error_Msg_Sem
+                       (+El, "%i is not an element of the record", +El);
+               end case;
+            end if;
+
+            El := Get_Chain (El);
+         end loop;
+
+         for I in Flist_First .. Flist_Last (Vtyp_Els) loop
+            if Get_Nth_Element (Def_List, I) = Null_Iir then
+               El_Decl := Get_Nth_Element (Vtyp_Els, I);
+               Error_Msg_Sem
+                 (+Decl, "no mode for element %i", +El_Decl);
+            end if;
+         end loop;
+
+         Close_Declarative_Region;
+      end if;
+
+      --  Analyze names of record and array elements.
+      El := Get_Elements_Definition_Chain (Decl);
+      while El /= Null_Iir loop
+         if Get_Kind (El) = Iir_Kind_Simple_Mode_View_Element then
+            --  LRM19 6.5.2 Interface object declarations
+            --  It is an error if the mode of an element mode indication
+            --  is linkage.
+            if Get_Mode (El) = Iir_Linkage_Mode then
+               Error_Msg_Sem
+                 (+El, "mode of element %i cannot be linkage", +El);
+            end if;
+         else
+            declare
+               El_View : Iir;
+               El_View_Type : Iir;
+               Rec_El : Iir;
+               El_Type : Iir;
+               View_Name : Iir;
+            begin
+               View_Name := Get_Mode_View_Name (El);
+               Sem_Name (View_Name);
+               El_View := Get_Named_Entity (View_Name);
+               if Is_Error (El_View) then
+                  El_View := Null_Iir;
+               else
+                  View_Name := Finish_Sem_Name (View_Name);
+                  Set_Mode_View_Name (El, View_Name);
+
+                  case Get_Kind (El_View) is
+                     when Iir_Kind_Mode_View_Declaration =>
+                        null;
+                     when Iir_Kind_Converse_Attribute =>
+                        --  Use prefix to get the type.
+                        El_View := Get_Named_Entity (Get_Prefix (El_View));
+                     when others =>
+                        Error_Msg_Sem
+                          (+View_Name,
+                           "name %i does not designate a mode view",
+                           +View_Name);
+                        El_View := Null_Iir;
+                  end case;
+               end if;
+
+               --  LRM19 6.5.2 Interface object declarations
+               --  For an element array mode view indication, the element
+               --  type or subtype of each corresponding record element shall
+               --  be compatible with the type or subtype of the mode view.
+               --  For an element record mode view indication, the type or
+               --  subtype of each corresponding record element shall be
+               --  compatible with the type or subtype of the mode view.
+               --
+               --  GHDL: For definition of compatible, see:
+               --    5.2 Scalar types
+               --    5.3.2.2 Index constraints and discrete ranges
+               --    5.3.3 Record types
+
+               Rec_El := Get_Named_Entity (El);
+               if Rec_El /= Null_Iir then
+                  El_Type := Get_Type (Rec_El);
+                  case Iir_Kinds_Mode_View_Element_Definition
+                    (Get_Kind (El)) is
+                     when Iir_Kind_Simple_Mode_View_Element =>
+                        raise Internal_Error;
+                     when Iir_Kind_Record_Mode_View_Element =>
+                        if not Is_Record_Type (El_Type) then
+                           Error_Msg_Sem
+                             (+View_Name, "view can only be used with "
+                                &" elements of record type");
+                           El_Type := Null_Iir;
+                        end if;
+                     when Iir_Kind_Array_Mode_View_Element =>
+                        if not Is_Array_Type (El_Type) then
+                           Error_Msg_Sem
+                             (+View_Name, "view can only be used with "
+                                &" elements of array type");
+                           El_Type := Null_Iir;
+                        else
+                           El_Type := Get_Element_Subtype (El_Type);
+                        end if;
+                  end case;
+               else
+                  El_Type := Null_Iir;
+               end if;
+
+               if El_View /= Null_Iir and then El_Type /= Null_Iir then
+                  El_View_Type := Get_Type_Of_Subtype_Indication
+                    (Get_Subtype_Indication (El_View));
+                  if Get_Base_Type (El_Type) /= Get_Base_Type (El_View_Type)
+                  then
+                     Error_Msg_Sem
+                       (+View_Name,
+                        "type of view and type of element are not compatible");
+                  end if;
+               end if;
+
+               --  FIXME: check constraint compatibility.
+               --  can only check during elaboration if two ranges are not
+               --  compatible ?
+            end;
+         end if;
+         El := Get_Chain (El);
+      end loop;
+   end Sem_Mode_View_Declaration;
+
    --  Analyze declaration DECL.
    --  PREV_DECL is the previous one (used for declaration like
    --    signal a, b : mytype; ) to get type and default value from the
@@ -2385,6 +2883,8 @@ package body Vhdl.Sem_Decls is
             --  An alias may add new alias declarations. Do not skip
             --  them: check that no existing attribute specifications
             --  apply to them.
+         when Iir_Kind_Mode_View_Declaration =>
+            Sem_Mode_View_Declaration (Decl);
          when Iir_Kind_Use_Clause =>
             Sem_Use_Clause (Decl);
          when Iir_Kind_Configuration_Specification =>
@@ -2487,6 +2987,44 @@ package body Vhdl.Sem_Decls is
       --  Keep the point of insertion for implicit signal declarations.
       End_Of_Declarations_For_Implicit_Declarations (Parent, Last_Decl);
    end Sem_Declaration_Chain;
+
+   procedure Mark_Declarations_Elaborated (Hdr : Iir; Flag : Boolean)
+   is
+      Decl : Iir;
+   begin
+      Decl := Get_Declaration_Chain (Hdr);
+      while Decl /= Null_Iir loop
+         case Get_Kind (Decl) is
+            when Iir_Kinds_Subprogram_Declaration =>
+               --  The flag can always be set, but not cleared on implicit
+               --  subprograms.
+               if Flag
+                 or else
+                 Get_Implicit_Definition (Decl) not in Iir_Predefined_Implicit
+               then
+                  Set_Elaborated_Flag (Decl, Flag);
+               end if;
+            when Iir_Kind_Type_Declaration =>
+               declare
+                  Def : constant Iir := Get_Type_Definition (Decl);
+               begin
+                  if Get_Kind (Def) = Iir_Kind_Protected_Type_Declaration then
+                     --  Mark the protected type as elaborated.
+                     --  Mark the methods as elaborated.
+                     Set_Elaborated_Flag (Def, Flag);
+                     Mark_Declarations_Elaborated (Def, Flag);
+                  end if;
+               end;
+            when Iir_Kind_Package_Instantiation_Declaration =>
+               if not Get_Immediate_Body_Flag (Decl) then
+                  Mark_Declarations_Elaborated (Decl, Flag);
+               end if;
+            when others =>
+               null;
+         end case;
+         Decl := Get_Chain (Decl);
+      end loop;
+   end Mark_Declarations_Elaborated;
 
    procedure Check_Full_Declaration (Decls_Parent : Iir; Decl: Iir)
    is
@@ -2599,6 +3137,10 @@ package body Vhdl.Sem_Decls is
                  and then Get_Package_Body (El) = Null_Iir
                then
                   Error_Msg_Sem (+El, "missing package body for %n", +El);
+               end if;
+            when Iir_Kind_Package_Instantiation_Declaration =>
+               if not Get_Immediate_Body_Flag (El) then
+                  Mark_Declarations_Elaborated (El, True);
                end if;
             when others =>
                null;

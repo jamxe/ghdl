@@ -71,6 +71,9 @@ package Grt.Options is
    --  Set Time_Resolution_Scale from Flag_String.
    procedure Set_Time_Resolution;
 
+   --  Return the time scale unit.
+   function Time_Scale_Unit return Long_Float;
+
    --  Display options help.
    --  Should not be called directly.
    procedure Help;
@@ -172,6 +175,13 @@ package Grt.Options is
 
    -- Report all uncovered cover points at the end of simulation
    Flag_Psl_Report_Uncovered : Boolean := False;
+
+   --  For AMS: tolerances (--atol and --rtol)
+   Abs_Tol : Ghdl_F64 := 1.0e-4;
+   Rel_Tol : Ghdl_F64 := 1.0e-4;
+
+   --  For AMS: minimum step (--step)
+   Step_Limit : Ghdl_F64 := 1.0e-1;
 
    --  Helper: extract time from STR (a number followed by a unit, without
    --  spaces; the number is optionnal).  In case of error, display an error

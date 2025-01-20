@@ -45,7 +45,7 @@ from pyTooling.Decorators import export
 
 from pyVHDLModel.Symbol import Symbol
 from pyVHDLModel.Instantiation import PackageInstantiation as VHDLModel_PackageInstantiation
-from pyVHDLModel.Interface import GenericInterfaceItem, PortInterfaceItem
+from pyVHDLModel.Interface import GenericInterfaceItemMixin, PortInterfaceItemMixin
 from pyVHDLModel.Concurrent import ConcurrentStatement
 from pyVHDLModel.DesignUnit import Context as VHDLModel_Context
 from pyVHDLModel.DesignUnit import Package as VHDLModel_Package
@@ -63,45 +63,61 @@ from pyGHDL.libghdl import utils
 from pyGHDL.libghdl._types import Iir
 from pyGHDL.libghdl.vhdl import nodes
 from pyGHDL.dom import DOMMixin, Position, DOMException
-from pyGHDL.dom._Utils import GetNameOfNode, GetDocumentationOfNode, GetPackageMemberSymbol, GetContextSymbol
-from pyGHDL.dom._Translate import GetGenericsFromChainedNodes, GetPortsFromChainedNodes
+from pyGHDL.dom._Utils import GetNameOfNode, GetDocumentationOfNode
+from pyGHDL.dom._Translate import GetGenericsFromChainedNodes, GetPortsFromChainedNodes, GetName
 from pyGHDL.dom._Translate import GetDeclaredItemsFromChainedNodes, GetConcurrentStatementsFromChainedNodes
-from pyGHDL.dom.Symbol import EntitySymbol, ContextReferenceSymbol, LibraryReferenceSymbol, PackageSymbol
+from pyGHDL.dom.Name import SimpleName, AllName
+from pyGHDL.dom.Symbol import (
+    EntitySymbol,
+    ContextReferenceSymbol,
+    LibraryReferenceSymbol,
+    PackageSymbol,
+    PackageMemberReferenceSymbol,
+    AllPackageMembersReferenceSymbol,
+)
 
 
 @export
 class LibraryClause(VHDLModel_LibraryClause, DOMMixin):
-    def __init__(self, libraryNode: Iir, symbols: Iterable[Symbol]):
+    def __init__(self, libraryNode: Iir, symbols: Iterable[Symbol]) -> None:
         super().__init__(symbols)
         DOMMixin.__init__(self, libraryNode)
 
 
 @export
 class UseClause(VHDLModel_UseClause, DOMMixin):
-    def __init__(self, useNode: Iir, symbols: Iterable[Symbol]):
+    def __init__(self, useNode: Iir, symbols: Iterable[Symbol]) -> None:
         super().__init__(symbols)
         DOMMixin.__init__(self, useNode)
 
     @classmethod
     def parse(cls, useNode: Iir):
-        uses = [GetPackageMemberSymbol(nodes.Get_Selected_Name(useNode))]
+        nameNode = nodes.Get_Selected_Name(useNode)
+        name = GetName(nameNode)
+        symbolType = AllPackageMembersReferenceSymbol if isinstance(name, AllName) else PackageMemberReferenceSymbol
+        uses = [symbolType(nameNode, name)]
         for use in utils.chain_iter(nodes.Get_Use_Clause_Chain(useNode)):
-            uses.append(GetPackageMemberSymbol(nodes.Get_Selected_Name(use)))
+            nameNode = nodes.Get_Selected_Name(use)
+            name = GetName(nameNode)
+            symbolType = AllPackageMembersReferenceSymbol if isinstance(name, AllName) else PackageMemberReferenceSymbol
+            uses.append(symbolType(nameNode, name))
 
         return cls(useNode, uses)
 
 
 @export
 class ContextReference(VHDLModel_ContextReference, DOMMixin):
-    def __init__(self, contextNode: Iir, symbols: Iterable[Symbol]):
+    def __init__(self, contextNode: Iir, symbols: Iterable[Symbol]) -> None:
         super().__init__(symbols)
         DOMMixin.__init__(self, contextNode)
 
     @classmethod
     def parse(cls, contextNode: Iir):
-        contexts = [GetContextSymbol(nodes.Get_Selected_Name(contextNode))]
+        nameNode = nodes.Get_Selected_Name(contextNode)
+        contexts = [ContextReferenceSymbol(nameNode, GetName(nameNode))]
         for context in utils.chain_iter(nodes.Get_Context_Reference_Chain(contextNode)):
-            contexts.append(GetContextSymbol(nodes.Get_Selected_Name(context)))
+            nameNode = nodes.Get_Selected_Name(context)
+            contexts.append(ContextReferenceSymbol(nameNode, GetName(nameNode)))
 
         return cls(contextNode, contexts)
 
@@ -113,12 +129,12 @@ class Entity(VHDLModel_Entity, DOMMixin):
         node: Iir,
         identifier: str,
         contextItems: Iterable[VHDLModel_ContextUnion] = None,
-        genericItems: Iterable[GenericInterfaceItem] = None,
-        portItems: Iterable[PortInterfaceItem] = None,
+        genericItems: Iterable[GenericInterfaceItemMixin] = None,
+        portItems: Iterable[PortInterfaceItemMixin] = None,
         declaredItems: Iterable = None,
         statements: Iterable["ConcurrentStatement"] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(identifier, contextItems, genericItems, portItems, declaredItems, statements, documentation)
         DOMMixin.__init__(self, node)
 
@@ -149,7 +165,7 @@ class Architecture(VHDLModel_Architecture, DOMMixin):
         declaredItems: Iterable = None,
         statements: Iterable["ConcurrentStatement"] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(identifier, entity, contextItems, declaredItems, statements, documentation)
         DOMMixin.__init__(self, node)
 
@@ -158,7 +174,7 @@ class Architecture(VHDLModel_Architecture, DOMMixin):
         name = GetNameOfNode(architectureNode)
         documentation = GetDocumentationOfNode(architectureNode)
         entityNameNode = nodes.Get_Entity_Name(architectureNode)
-        entitySymbol = EntitySymbol(entityNameNode, GetNameOfNode(entityNameNode))
+        entitySymbol = EntitySymbol(entityNameNode, GetName(entityNameNode))
         declaredItems = GetDeclaredItemsFromChainedNodes(
             nodes.Get_Declaration_Chain(architectureNode), "architecture", name
         )
@@ -177,10 +193,10 @@ class Component(VHDLModel_Component, DOMMixin):
         self,
         node: Iir,
         identifier: str,
-        genericItems: Iterable[GenericInterfaceItem] = None,
-        portItems: Iterable[PortInterfaceItem] = None,
+        genericItems: Iterable[GenericInterfaceItemMixin] = None,
+        portItems: Iterable[PortInterfaceItemMixin] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(identifier, genericItems, portItems, documentation)
         DOMMixin.__init__(self, node)
 
@@ -201,10 +217,10 @@ class Package(VHDLModel_Package, DOMMixin):
         node: Iir,
         identifier: str,
         contextItems: Iterable[VHDLModel_ContextUnion] = None,
-        genericItems: Iterable[GenericInterfaceItem] = None,
+        genericItems: Iterable[GenericInterfaceItemMixin] = None,
         declaredItems: Iterable = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(identifier, contextItems, genericItems, declaredItems, documentation)
         DOMMixin.__init__(self, node)
 
@@ -235,17 +251,17 @@ class PackageBody(VHDLModel_PackageBody, DOMMixin):
         contextItems: Iterable[VHDLModel_ContextUnion] = None,
         declaredItems: Iterable = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(packageSymbol, contextItems, declaredItems, documentation)
         DOMMixin.__init__(self, node)
 
     @classmethod
     def parse(cls, packageBodyNode: Iir, contextItems: Iterable[VHDLModel_ContextUnion]):
-        packageName = GetNameOfNode(packageBodyNode)
-        packageSymbol = PackageSymbol(packageBodyNode, packageName)
+        packageIdentifier = GetNameOfNode(packageBodyNode)
+        packageSymbol = PackageSymbol(packageBodyNode, SimpleName(packageBodyNode, packageIdentifier))
         documentation = GetDocumentationOfNode(packageBodyNode)
         declaredItems = GetDeclaredItemsFromChainedNodes(
-            nodes.Get_Declaration_Chain(packageBodyNode), "package", packageName
+            nodes.Get_Declaration_Chain(packageBodyNode), "package", packageIdentifier
         )
 
         # FIXME: read use clauses
@@ -262,7 +278,7 @@ class PackageInstantiation(VHDLModel_PackageInstantiation, DOMMixin):
         uninstantiatedPackageName: Symbol,
         #        genericItems: List[GenericInterfaceItem] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(identifier, uninstantiatedPackageName, documentation)
         DOMMixin.__init__(self, node)
 
@@ -288,7 +304,7 @@ class Context(VHDLModel_Context, DOMMixin):
         identifier: str,
         references: Iterable[VHDLModel_ContextUnion] = None,
         documentation: str = None,
-    ):
+    ) -> None:
         super().__init__(identifier, references, documentation)
         DOMMixin.__init__(self, node)
 
@@ -305,7 +321,7 @@ class Context(VHDLModel_Context, DOMMixin):
             kind = GetIirKindOfNode(item)
             if kind is nodes.Iir_Kind.Library_Clause:
                 libraryIdentifier = GetNameOfNode(item)
-                names.append(LibraryReferenceSymbol(item, libraryIdentifier))
+                names.append(LibraryReferenceSymbol(item, SimpleName(item, libraryIdentifier)))
                 if nodes.Get_Has_Identifier_List(item):
                     continue
 
@@ -324,7 +340,9 @@ class Context(VHDLModel_Context, DOMMixin):
 
 @export
 class Configuration(VHDLModel_Configuration, DOMMixin):
-    def __init__(self, node: Iir, identifier: str, contextItems: Iterable[Context] = None, documentation: str = None):
+    def __init__(
+        self, node: Iir, identifier: str, contextItems: Iterable[Context] = None, documentation: str = None
+    ) -> None:
         super().__init__(identifier, contextItems, documentation)
         DOMMixin.__init__(self, node)
 

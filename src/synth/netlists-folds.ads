@@ -36,7 +36,7 @@ package Netlists.Folds is
                              return Net;
 
    --  Concatenate nets of ELS in reverse order.  So if ELS(L .. R), then
-   --  ELS(L) will be at offset 0.
+   --  ELS(L) will be at offset 0 (so the last input).
    function Build2_Concat (Ctxt : Context_Acc; Els : Net_Array) return Net;
 
    --  If L or R has a null width, return the other.
@@ -76,12 +76,6 @@ package Netlists.Folds is
    function Build2_Extract
      (Ctxt : Context_Acc; I : Net; Off, W : Width) return Net;
 
-   --  Likewise, but if I is an output of a mux2, build the extract gates
-   --  on the input of the mux2 (recursively).
-   --  The purpose is to keep the control flow of the mux2 tree.
-   function Build2_Extract_Push
-     (Ctxt : Context_Acc; I : Net; Off, W : Width) return Net;
-
    --  Return A -> B  ==  !A || B
    function Build2_Imp (Ctxt : Context_Acc; A, B : Net; Loc : Location_Type)
                        return Net;
@@ -102,4 +96,11 @@ package Netlists.Folds is
    --  The old dyn_insert gate is removed.
    function Add_Enable_To_Dyn_Insert
      (Ctxt : Context_Acc; Inst : Instance; Sel : Net) return Instance;
+
+   --  Specially handle 'and' to canonicalize clock edge: move them to the
+   --  top of trees so that it is easily recognized by infere.
+   --  If KEEP is true, R and L shouldn't be modified.
+   function Build2_Canon_And (Ctxt : Context_Acc;
+                              R, L : Net;
+                              Keep : Boolean) return Net;
 end Netlists.Folds;

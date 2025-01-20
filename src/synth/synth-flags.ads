@@ -57,6 +57,9 @@ package Synth.Flags is
    --  Do not transform null net to null X.
    Flag_Debug_Nonull : Boolean := False;
 
+   --  Disp some stats.
+   Flag_Debug_Stats : Boolean := False;
+
    Flag_Trace_Statements : Boolean := False;
 
    --  Display source of elaborated design.
@@ -73,6 +76,11 @@ package Synth.Flags is
 
    --  Synthesize PSL and assertions.
    Flag_Formal : Boolean := True;
+
+   --  True to keep hierarchy: an module/entity instantiation is synthesized
+   --  as an instantiation.
+   --  If false, the netlist is flat.
+   Flag_Keep_Hierarchy : Boolean := True;
 
    --  If true, automatically add a cover on PSL asserts to know if the
    --  asserted has been started.

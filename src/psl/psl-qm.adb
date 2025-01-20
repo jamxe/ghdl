@@ -14,8 +14,9 @@
 --  You should have received a copy of the GNU General Public License
 --  along with this program.  If not, see <gnu.org/licenses>.
 
-with Ada.Text_IO;
 with Types; use Types;
+with Simple_IO;
+
 with PSL.Types; use PSL.Types;
 with PSL.Errors; use PSL.Errors;
 with PSL.Prints;
@@ -24,7 +25,7 @@ with PSL.CSE;
 package body PSL.QM is
    procedure Reset is
    begin
-      for I in 1 .. Nbr_Terms loop
+      for I in 1 .. Natural'Min (Nbr_Terms, Max_Terms) loop
          Set_HDL_Index (Term_Assoc (I), 0);
       end loop;
       Nbr_Terms := 0;
@@ -38,7 +39,7 @@ package body PSL.QM is
 
    procedure Disp_Primes_Set (Ps : Primes_Set)
    is
-      use Ada.Text_IO;
+      use Simple_IO;
       use PSL.Prints;
       Prime : Prime_Type;
       T : Vector_Type;
@@ -206,17 +207,16 @@ package body PSL.QM is
                if Index = 0 then
                   Nbr_Terms := Nbr_Terms + 1;
                   if Nbr_Terms > Max_Terms then
-                     raise Program_Error;
+                     --  Overflow (too many terms).  Returns now.
+                     return Res;
                   end if;
                   Term_Assoc (Nbr_Terms) := N;
                   Index := Int32 (Nbr_Terms);
                   Set_HDL_Index (N, Index);
                else
-                  if Index not in 1 .. Int32 (Nbr_Terms)
-                    or else Term_Assoc (Natural (Index)) /= N
-                  then
-                     raise Internal_Error;
-                  end if;
+                  pragma Assert (Index in 1 .. Int32 (Nbr_Terms));
+                  pragma Assert (Term_Assoc (Natural (Index)) = N);
+                  null;
                end if;
                T := Term (Natural (Index));
                Res.Nbr := 1;
@@ -344,8 +344,19 @@ package body PSL.QM is
    end Build_Node;
 
    --  FIXME: finish the work: do a real Quine-McKluskey minimization.
-   function Reduce (N : Node) return Node is
+   function Reduce (N : Node) return Node
+   is
+      Res : Node;
    begin
-      return Build_Node (Build_Primes (N));
+      if Nbr_Terms > Max_Terms then
+         --  Overflow, do not reduce.
+         return N;
+      end if;
+      Res := Build_Node (Build_Primes (N));
+      if Nbr_Terms > Max_Terms then
+         --  Overflow.
+         return N;
+      end if;
+      return Res;
    end Reduce;
 end PSL.QM;

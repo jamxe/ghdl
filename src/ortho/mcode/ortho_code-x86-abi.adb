@@ -31,9 +31,7 @@ with Binary_File.Memory;
 
 package body Ortho_Code.X86.Abi is
    --  First argument is at %ebp + 8 / %rbp + 16
-   Subprg_Stack_Init : constant Int32 :=
-     Boolean'Pos (Flags.M64) * 16
-     + Boolean'Pos (not Flags.M64) * 8;
+   Subprg_Stack_Init : constant Int32 := Ptr_Size * 2;
 
    procedure Start_Subprogram (Subprg : O_Dnode; Abi : out O_Abi_Subprg)
    is
@@ -102,6 +100,7 @@ package body Ortho_Code.X86.Abi is
       Set_Decl_Reg (Inter, Reg);
       if Flags.Win64 and Reg in Regs_R64 then
          --  Use the normal home location (first reg at offset 8).
+         --  Note: this is overwritten by Ortho_Code.X86.Insns.Gen_Subprg_Insns
          Set_Local_Offset (Inter, Int32 (8 * Abi.Inum));
       else
          Set_Local_Offset (Inter, Abi.Offset);
@@ -223,9 +222,11 @@ package body Ortho_Code.X86.Abi is
       Emits.Emit_Var_Decl (Decl);
    end Expand_Var_Decl;
 
-   procedure Expand_Var_Zero (Decl : O_Dnode) is
+   procedure Expand_Var_Zero (Decl : O_Dnode;
+                              Storage : O_Storage;
+                              Dtype : O_Tnode) is
    begin
-      Emits.Emit_Var_Zero (Decl);
+      Emits.Emit_Var_Zero (Decl, Storage, Dtype);
    end Expand_Var_Zero;
 
    procedure Expand_Init_Value (Decl : O_Dnode; Val : O_Cnode) is
@@ -684,8 +685,10 @@ package body Ortho_Code.X86.Abi is
    is
       use Ortho_Code.Debug;
    begin
-      --  Alignment of doubles is platform dependent.
-      Mode_Align (Mode_F64) := X86.Flags.Mode_F64_Align;
+      --  Alignment of doubles and double words is platform dependent.
+      Mode_Align (Mode_F64) := X86.Flags.Mode_64_Align;
+      Mode_Align (Mode_I64) := X86.Flags.Mode_64_Align;
+      Mode_Align (Mode_U64) := X86.Flags.Mode_64_Align;
 
       if Flag_Debug_Hli then
          Disps.Init;

@@ -26,6 +26,9 @@ with Vhdl.Parse;
 package body Vhdl.Parse_Psl is
    subtype Vhdl_Node is Vhdl.Nodes.Iir;
 
+   function Psl_To_Vhdl (N : Node) return Vhdl_Node;
+   function Vhdl_To_Psl (N : Vhdl_Node) return Node;
+
    procedure Error_Msg_Parse (Msg: String) is
    begin
       Report_Msg (Msgid_Error, Errorout.Parse, Get_Token_Coord, Msg);
@@ -49,6 +52,7 @@ package body Vhdl.Parse_Psl is
    function Parse_Number return Node
    is
       V : Int64;
+      Expr : Vhdl_Node;
       Res : Node;
    begin
       if Current_Token = Tok_Integer then
@@ -67,8 +71,9 @@ package body Vhdl.Parse_Psl is
          Scan;
          return Res;
       else
-         Error_Msg_Parse ("number expected");
-         return Null_Node;
+         Expr := Vhdl.Parse.Parse_Expression;
+         Res := Vhdl_To_Psl (Expr);
+         return Res;
       end if;
    end Parse_Number;
 
@@ -84,17 +89,19 @@ package body Vhdl.Parse_Psl is
          return;
       end if;
 
-      Low := Get_Value (Low_B);
       if Get_Kind (High_B) = N_Inf then
          return;
       end if;
 
-      High := Get_Value (High_B);
-      if Low > High then
-         Error_Msg_Parse
-           ("Low bound of range must be lower than High bound," &
-              " actual range is:" &
-              Uns32'Image (Low) & " to" & Uns32'Image (High));
+      if Get_Kind (Low_B) = N_Number and then Get_Kind (High_B) = N_Number then
+         Low := Get_Value (Low_B);
+         High := Get_Value (High_B);
+         if Low > High then
+            Error_Msg_Parse
+              ("Low bound of range must be lower than High bound," &
+                 " actual range is:" &
+                 Uns32'Image (Low) & " to" & Uns32'Image (High));
+         end if;
       end if;
    end Check_Positive_Count;
 
@@ -112,8 +119,6 @@ package body Vhdl.Parse_Psl is
          end if;
       end if;
    end Parse_Count;
-
-   function Psl_To_Vhdl (N : Node) return Vhdl_Node;
 
    function Binary_Psl_Operator_To_Vhdl (N : Node; Kind : Vhdl.Nodes.Iir_Kind)
                                         return Vhdl_Node
@@ -985,17 +990,17 @@ package body Vhdl.Parse_Psl is
                if Prio > Prio_FL_Abort then
                   return Res;
                end if;
-               return Parse_Abort (N_Abort, Res);
+               Res := Parse_Abort (N_Abort, Res);
             when Tok_Sync_Abort =>
                if Prio > Prio_FL_Abort then
                   return Res;
                end if;
-               return Parse_Abort (N_Sync_Abort, Res);
+               Res := Parse_Abort (N_Sync_Abort, Res);
             when Tok_Async_Abort =>
                if Prio > Prio_FL_Abort then
                   return Res;
                end if;
-               return Parse_Abort (N_Async_Abort, Res);
+               Res := Parse_Abort (N_Async_Abort, Res);
             when Tok_Exclam_Mark =>
                N := Create_Node_Loc (N_Strong);
                Set_Property (N, Res);

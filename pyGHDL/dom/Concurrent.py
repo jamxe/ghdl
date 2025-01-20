@@ -70,12 +70,6 @@ from pyVHDLModel.Concurrent import (
 from pyGHDL.libghdl import Iir, utils
 from pyGHDL.libghdl.vhdl import nodes
 from pyGHDL.dom import DOMMixin, DOMException, Position
-from pyGHDL.dom._Utils import (
-    GetNameOfNode,
-    GetEntityInstantiationSymbol,
-    GetComponentInstantiationSymbol,
-    GetConfigurationInstantiationSymbol,
-)
 from pyGHDL.dom.Range import Range
 from pyGHDL.dom.Symbol import (
     ArchitectureSymbol,
@@ -87,21 +81,21 @@ from pyGHDL.dom.Symbol import (
 
 @export
 class GenericAssociationItem(VHDLModel_GenericAssociationItem, DOMMixin):
-    def __init__(self, associationNode: Iir, actual: ExpressionUnion, formal: Symbol = None):
+    def __init__(self, associationNode: Iir, actual: ExpressionUnion, formal: Symbol = None) -> None:
         super().__init__(actual, formal)
         DOMMixin.__init__(self, associationNode)
 
 
 @export
 class PortAssociationItem(VHDLModel_PortAssociationItem, DOMMixin):
-    def __init__(self, associationNode: Iir, actual: ExpressionUnion, formal: Symbol = None):
+    def __init__(self, associationNode: Iir, actual: ExpressionUnion, formal: Symbol = None) -> None:
         super().__init__(actual, formal)
         DOMMixin.__init__(self, associationNode)
 
 
 @export
 class ParameterAssociationItem(VHDLModel_ParameterAssociationItem, DOMMixin):
-    def __init__(self, associationNode: Iir, actual: ExpressionUnion, formal: Symbol = None):
+    def __init__(self, associationNode: Iir, actual: ExpressionUnion, formal: Symbol = None) -> None:
         super().__init__(actual, formal)
         DOMMixin.__init__(self, associationNode)
 
@@ -115,15 +109,15 @@ class ComponentInstantiation(VHDLModel_ComponentInstantiation, DOMMixin):
         componentSymbol: ComponentInstantiationSymbol,
         genericAssociations: Iterable[AssociationItem] = None,
         portAssociations: Iterable[AssociationItem] = None,
-    ):
+    ) -> None:
         super().__init__(label, componentSymbol, genericAssociations, portAssociations)
         DOMMixin.__init__(self, instantiationNode)
 
     @classmethod
     def parse(cls, instantiationNode: Iir, instantiatedUnit: Iir, label: str) -> "ComponentInstantiation":
-        from pyGHDL.dom._Translate import GetGenericMapAspect, GetPortMapAspect
+        from pyGHDL.dom._Translate import GetName, GetGenericMapAspect, GetPortMapAspect
 
-        componentSymbol = GetComponentInstantiationSymbol(instantiatedUnit)
+        componentSymbol = ComponentInstantiationSymbol(instantiatedUnit, GetName(instantiatedUnit))
         genericAssociations = GetGenericMapAspect(nodes.Get_Generic_Map_Aspect_Chain(instantiationNode))
         portAssociations = GetPortMapAspect(nodes.Get_Port_Map_Aspect_Chain(instantiationNode))
 
@@ -140,21 +134,21 @@ class EntityInstantiation(VHDLModel_EntityInstantiation, DOMMixin):
         architectureSymbol: ArchitectureSymbol = None,  # TODO: merge both symbols ?
         genericAssociations: Iterable[AssociationItem] = None,
         portAssociations: Iterable[AssociationItem] = None,
-    ):
+    ) -> None:
         super().__init__(label, entitySymbol, architectureSymbol, genericAssociations, portAssociations)
         DOMMixin.__init__(self, instantiationNode)
 
     @classmethod
     def parse(cls, instantiationNode: Iir, instantiatedUnit: Iir, label: str) -> "EntityInstantiation":
-        from pyGHDL.dom._Translate import GetGenericMapAspect, GetPortMapAspect
+        from pyGHDL.dom._Translate import GetName, GetGenericMapAspect, GetPortMapAspect
 
-        entityId = nodes.Get_Entity_Name(instantiatedUnit)
-        entitySymbol = GetEntityInstantiationSymbol(entityId)
+        entityName = nodes.Get_Entity_Name(instantiatedUnit)
+        entitySymbol = EntityInstantiationSymbol(entityName, GetName(entityName))
 
         architectureSymbol = None
         architectureId = nodes.Get_Architecture(instantiatedUnit)
         if architectureId != nodes.Null_Iir:
-            architectureSymbol = ArchitectureSymbol(GetNameOfNode(architectureId), entitySymbol)
+            architectureSymbol = ArchitectureSymbol(GetName(architectureId), entitySymbol)
 
         genericAssociations = GetGenericMapAspect(nodes.Get_Generic_Map_Aspect_Chain(instantiationNode))
         portAssociations = GetPortMapAspect(nodes.Get_Port_Map_Aspect_Chain(instantiationNode))
@@ -171,16 +165,16 @@ class ConfigurationInstantiation(VHDLModel_ConfigurationInstantiation, DOMMixin)
         configurationSymbol: ConfigurationInstantiationSymbol,
         genericAssociations: Iterable[AssociationItem] = None,
         portAssociations: Iterable[AssociationItem] = None,
-    ):
+    ) -> None:
         super().__init__(label, configurationSymbol, genericAssociations, portAssociations)
         DOMMixin.__init__(self, instantiationNode)
 
     @classmethod
     def parse(cls, instantiationNode: Iir, instantiatedUnit: Iir, label: str) -> "ConfigurationInstantiation":
-        from pyGHDL.dom._Translate import GetGenericMapAspect, GetPortMapAspect
+        from pyGHDL.dom._Translate import GetName, GetGenericMapAspect, GetPortMapAspect
 
-        configurationId = nodes.Get_Configuration_Name(instantiatedUnit)
-        configurationSymbol = GetConfigurationInstantiationSymbol(configurationId)
+        configurationName = nodes.Get_Configuration_Name(instantiatedUnit)
+        configurationSymbol = ConfigurationInstantiationSymbol(configurationName, GetName(configurationName))
 
         genericAssociations = GetGenericMapAspect(nodes.Get_Generic_Map_Aspect_Chain(instantiationNode))
         portAssociations = GetPortMapAspect(nodes.Get_Port_Map_Aspect_Chain(instantiationNode))
@@ -196,7 +190,7 @@ class ConcurrentBlockStatement(VHDLModel_ConcurrentBlockStatement, DOMMixin):
         label: str,
         declaredItems: Iterable = None,
         statements: Iterable["ConcurrentStatement"] = None,
-    ):
+    ) -> None:
         super().__init__(label, None, declaredItems, statements)
         DOMMixin.__init__(self, blockNode)
 
@@ -224,19 +218,23 @@ class ProcessStatement(VHDLModel_ProcessStatement, DOMMixin):
         declaredItems: Iterable = None,
         statements: Iterable[SequentialStatement] = None,
         sensitivityList: Iterable[Symbol] = None,
-    ):
+    ) -> None:
         super().__init__(label, declaredItems, statements, sensitivityList)
         DOMMixin.__init__(self, processNode)
 
     @classmethod
     def parse(cls, processNode: Iir, label: str, hasSensitivityList: bool) -> "ProcessStatement":
-        from pyGHDL.dom._Translate import GetDeclaredItemsFromChainedNodes, GetSequentialStatementsFromChainedNodes
+        from pyGHDL.dom._Translate import (
+            GetName,
+            GetDeclaredItemsFromChainedNodes,
+            GetSequentialStatementsFromChainedNodes,
+        )
 
         sensitivityList = None
         if hasSensitivityList:
             sensitivityList = []
             for item in utils.list_iter(nodes.Get_Sensitivity_List(processNode)):
-                sensitivityList.append(GetNameOfNode(item))
+                sensitivityList.append(GetName(item))
 
         declaredItems = GetDeclaredItemsFromChainedNodes(nodes.Get_Declaration_Chain(processNode), "process", label)
         statements = GetSequentialStatementsFromChainedNodes(
@@ -247,7 +245,7 @@ class ProcessStatement(VHDLModel_ProcessStatement, DOMMixin):
 
 
 @export
-class IfGenerateBranch(VHDLModel_IfGenerateBranch):
+class IfGenerateBranch(VHDLModel_IfGenerateBranch, DOMMixin):
     def __init__(
         self,
         branchNode: Iir,
@@ -255,7 +253,7 @@ class IfGenerateBranch(VHDLModel_IfGenerateBranch):
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
         alternativeLabel: str = None,
-    ):
+    ) -> None:
         super().__init__(condition, declaredItems, statements, alternativeLabel)
         DOMMixin.__init__(self, branchNode)
 
@@ -284,7 +282,7 @@ class IfGenerateBranch(VHDLModel_IfGenerateBranch):
 
 
 @export
-class ElsifGenerateBranch(VHDLModel_ElsifGenerateBranch):
+class ElsifGenerateBranch(VHDLModel_ElsifGenerateBranch, DOMMixin):
     def __init__(
         self,
         branchNode: Iir,
@@ -292,7 +290,7 @@ class ElsifGenerateBranch(VHDLModel_ElsifGenerateBranch):
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
         alternativeLabel: str = None,
-    ):
+    ) -> None:
         super().__init__(condition, declaredItems, statements, alternativeLabel)
         DOMMixin.__init__(self, branchNode)
 
@@ -321,14 +319,14 @@ class ElsifGenerateBranch(VHDLModel_ElsifGenerateBranch):
 
 
 @export
-class ElseGenerateBranch(VHDLModel_ElseGenerateBranch):
+class ElseGenerateBranch(VHDLModel_ElseGenerateBranch, DOMMixin):
     def __init__(
         self,
         branchNode: Iir,
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
         alternativeLabel: str = None,
-    ):
+    ) -> None:
         super().__init__(declaredItems, statements, alternativeLabel)
         DOMMixin.__init__(self, branchNode)
 
@@ -363,7 +361,7 @@ class IfGenerateStatement(VHDLModel_IfGenerateStatement, DOMMixin):
         ifBranch: IfGenerateBranch,
         elsifBranches: Iterable[ElsifGenerateBranch] = None,
         elseBranch: ElseGenerateBranch = None,
-    ):
+    ) -> None:
         super().__init__(label, ifBranch, elsifBranches, elseBranch)
         DOMMixin.__init__(self, generateNode)
 
@@ -391,14 +389,14 @@ class IfGenerateStatement(VHDLModel_IfGenerateStatement, DOMMixin):
 
 @export
 class IndexedGenerateChoice(VHDLModel_IndexedGenerateChoice, DOMMixin):
-    def __init__(self, node: Iir, expression: ExpressionUnion):
+    def __init__(self, node: Iir, expression: ExpressionUnion) -> None:
         super().__init__(expression)
         DOMMixin.__init__(self, node)
 
 
 @export
 class RangedGenerateChoice(VHDLModel_RangedGenerateChoice, DOMMixin):
-    def __init__(self, node: Iir, rng: Range):
+    def __init__(self, node: Iir, rng: Range) -> None:
         super().__init__(rng)
         DOMMixin.__init__(self, node)
 
@@ -412,7 +410,7 @@ class GenerateCase(VHDLModel_GenerateCase, DOMMixin):
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
         alternativeLabel: str = None,
-    ):
+    ) -> None:
         super().__init__(choices, declaredItems, statements, alternativeLabel)
         DOMMixin.__init__(self, node)
 
@@ -446,7 +444,7 @@ class OthersGenerateCase(VHDLModel_OthersGenerateCase, DOMMixin):
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
         alternativeLabel: str = None,
-    ):
+    ) -> None:
         super().__init__(declaredItems, statements, alternativeLabel)
         DOMMixin.__init__(self, caseNode)
 
@@ -480,7 +478,7 @@ class CaseGenerateStatement(VHDLModel_CaseGenerateStatement, DOMMixin):
         label: str,
         expression: ExpressionUnion,
         cases: Iterable[ConcurrentCase],
-    ):
+    ) -> None:
         super().__init__(label, expression, cases)
         DOMMixin.__init__(self, generateNode)
 
@@ -490,7 +488,7 @@ class CaseGenerateStatement(VHDLModel_CaseGenerateStatement, DOMMixin):
         from pyGHDL.dom._Translate import (
             GetExpressionFromNode,
             GetRangeFromNode,
-            GetNameFromNode,
+            GetName,
         )
 
         expression = GetExpressionFromNode(nodes.Get_Expression(generateNode))
@@ -524,7 +522,7 @@ class CaseGenerateStatement(VHDLModel_CaseGenerateStatement, DOMMixin):
                     nodes.Iir_Kind.Attribute_Name,
                     nodes.Iir_Kind.Parenthesis_Name,
                 ):
-                    rng = GetNameFromNode(choiceRange)
+                    rng = GetName(choiceRange)
                 else:
                     pos = Position.parse(alternative)
                     raise DOMException(
@@ -574,18 +572,18 @@ class ForGenerateStatement(VHDLModel_ForGenerateStatement, DOMMixin):
         rng: Range,
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
-    ):
+    ) -> None:
         super().__init__(label, loopIndex, rng, declaredItems, statements)
         DOMMixin.__init__(self, generateNode)
 
     @classmethod
     def parse(cls, generateNode: Iir, label: str) -> "ForGenerateStatement":
-        from pyGHDL.dom._Utils import GetIirKindOfNode
+        from pyGHDL.dom._Utils import GetIirKindOfNode, GetNameOfNode
         from pyGHDL.dom._Translate import (
             GetDeclaredItemsFromChainedNodes,
             GetConcurrentStatementsFromChainedNodes,
             GetRangeFromNode,
-            GetNameFromNode,
+            GetName,
         )
 
         spec = nodes.Get_Parameter_Specification(generateNode)
@@ -599,7 +597,7 @@ class ForGenerateStatement(VHDLModel_ForGenerateStatement, DOMMixin):
             nodes.Iir_Kind.Attribute_Name,
             nodes.Iir_Kind.Parenthesis_Name,
         ):
-            rng = GetNameFromNode(discreteRange)
+            rng = GetName(discreteRange)
         else:
             pos = Position.parse(generateNode)
             raise DOMException(
@@ -618,7 +616,7 @@ class ForGenerateStatement(VHDLModel_ForGenerateStatement, DOMMixin):
 
 @export
 class WaveformElement(VHDLModel_WaveformElement, DOMMixin):
-    def __init__(self, waveNode: Iir, expression: ExpressionUnion, after: ExpressionUnion):
+    def __init__(self, waveNode: Iir, expression: ExpressionUnion, after: ExpressionUnion) -> None:
         super().__init__(expression, after)
         DOMMixin.__init__(self, waveNode)
 
@@ -645,16 +643,16 @@ class ConcurrentSimpleSignalAssignment(VHDLModel_ConcurrentSimpleSignalAssignmen
         label: str,
         target: Symbol,
         waveform: Iterable[WaveformElement],
-    ):
+    ) -> None:
         super().__init__(label, target, waveform)
         DOMMixin.__init__(self, assignmentNode)
 
     @classmethod
     def parse(cls, assignmentNode: Iir, label: str) -> "ConcurrentSimpleSignalAssignment":
-        from pyGHDL.dom._Translate import GetNameFromNode
+        from pyGHDL.dom._Translate import GetName
 
         target = nodes.Get_Target(assignmentNode)
-        targetName = GetNameFromNode(target)
+        targetName = GetName(target)
 
         waveform = []
         for wave in utils.chain_iter(nodes.Get_Waveform_Chain(assignmentNode)):
@@ -671,18 +669,18 @@ class ConcurrentProcedureCall(VHDLModel_ConcurrentProcedureCall, DOMMixin):
         label: str,
         procedureName: Symbol,
         parameterMappings: Iterable,
-    ):
+    ) -> None:
         super().__init__(label, procedureName, parameterMappings)
         DOMMixin.__init__(self, callNode)
 
     @classmethod
     def parse(cls, concurrentCallNode: Iir, label: str) -> "ConcurrentProcedureCall":
-        from pyGHDL.dom._Translate import GetNameFromNode, GetParameterMapAspect
+        from pyGHDL.dom._Translate import GetName, GetParameterMapAspect
 
         callNode = nodes.Get_Procedure_Call(concurrentCallNode)
 
         prefix = nodes.Get_Prefix(callNode)
-        procedureName = GetNameFromNode(prefix)
+        procedureName = GetName(prefix)
         parameterAssociations = GetParameterMapAspect(nodes.Get_Parameter_Association_Chain(callNode))
 
         return cls(concurrentCallNode, label, procedureName, parameterAssociations)
@@ -697,7 +695,7 @@ class ConcurrentAssertStatement(VHDLModel_ConcurrentAssertStatement, DOMMixin):
         message: ExpressionUnion = None,
         severity: ExpressionUnion = None,
         label: str = None,
-    ):
+    ) -> None:
         super().__init__(condition, message, severity, label)
         DOMMixin.__init__(self, assertNode)
 

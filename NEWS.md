@@ -1,6 +1,19 @@
-## [Next] 4.0
+## [Next] 5.0
 
-[![GitHub v4.0 milestone](https://img.shields.io/github/milestones/progress/ghdl/ghdl/12?style=flat-square)](https://github.com/ghdl/ghdl/milestone/12)
+## [2024-04-14] 4.1
+
+- The mcode backend is now fully supported on Windows x64
+- Coverage output has been improved for being supported by vunit.
+
+## [2024-03-06] 4.0
+
+- For the mcode backend, elaboration of the designs is now performed
+  before code generation.  This allows some optimizations and the support
+  of external names.
+- There is a new signal dumper (using FST format) for the mcode backend.
+- The GCC backend will be deprecated and the  LLVM backend will be used like
+  the mcode backend (code generation in memory). As a consequence, no backend
+  will generate object files anymore.
 
 ## [2023-03-08] 3.0
 
@@ -147,7 +160,7 @@ However, we suggest every contributor to update the remote URLs in their local c
 	- process(all).
 	- generic packages and interface package declarations.
 	- block comments (aka delimited comments)
-	- implicitely defined to_string functions.
+	- implicitly defined to_string functions.
 	- OSVVM 2014_01
 - Bugs fixed
 
@@ -161,7 +174,7 @@ However, we suggest every contributor to update the remote URLs in their local c
 
 ## 0.30
 
-Never released, swith to Dunoon Edition.
+Never released, switch to Dunoon Edition.
 
 ## [2010-01-09] 0.29
 
@@ -302,7 +315,7 @@ Never released, swith to Dunoon Edition.
 
 ## 0.20 [2005-10-15]
 
-- stack memory usage improved for shortcurt operations.
+- stack memory usage improved for shortcut operations.
 - gtkwave now displays nice waves for bit and std_ulogic signals.
 - time unit is displayed in assert/report message.
 - `-fexplicit` option added.
@@ -374,7 +387,7 @@ Never released, swith to Dunoon Edition.
 - `--no-run` option added to prevent simulation (may be used to disp tree only).
 - disp signal name in error when multiple sources drive an unresolved signal.
 - `-m`/`--gen-makefile` now handle several libraries.
-- dependences are not stored anymore in libraries (shorter/faster).
+- dependencies are not stored anymore in libraries (shorter/faster).
 - mentor version of ieee library is now provided.
 - handling of universal types is more consistent with LRM (almost corner cases).
 - iterator and indexes whose bounds were universal expressions are now of type integer or erroneous, according to the weird LRM rules.
@@ -473,7 +486,7 @@ Never released, swith to Dunoon Edition.
 
 - bug fix:
 	- corner case of signal not updated
-	- handle `'stable`, `'quiet` with a paramater > 0
+	- handle `'stable`, `'quiet` with a parameter > 0
 	- typos (missing `+ `) in sparc.S
 
 ## [2004-04-17] 0.11

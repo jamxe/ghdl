@@ -233,6 +233,7 @@ package Vhdl.Elocations is
    -- Iir_Kind_Subnature_Declaration (None)
 
    -- Iir_Kind_Interface_Signal_Declaration (L3)
+   -- Iir_Kind_Interface_View_Declaration (L3)
    -- Iir_Kind_Interface_Constant_Declaration (L3)
    -- Iir_Kind_Interface_Variable_Declaration (L3)
    -- Iir_Kind_Interface_File_Declaration (L3)
@@ -328,6 +329,16 @@ package Vhdl.Elocations is
    -- Iir_Kind_Across_Quantity_Declaration (None)
    -- Iir_Kind_Through_Quantity_Declaration (None)
 
+   -- Iir_Kind_Simple_Mode_View_Element (None)
+   -- Iir_Kind_Record_Mode_View_Element (None)
+   -- Iir_Kind_Array_Mode_View_Element (None)
+
+   -- Iir_Kind_Mode_View_Declaration (L4)
+   --
+   --   Get/Set_End_Location (Field2)
+   --
+   --   Get/Set_Is_Location (Field4)
+
    -- Iir_Kind_Use_Clause (None)
 
    -- Iir_Kind_Context_Reference (None)
@@ -408,6 +419,9 @@ package Vhdl.Elocations is
 
    -- Iir_Kind_Subtype_Definition (None)
 
+   -- Iir_Kind_Record_Mode_View_Indication (None)
+   -- Iir_Kind_Array_Mode_View_Indication (None)
+
    -------------------------
    --  Nature definitions --
    -------------------------
@@ -456,6 +470,8 @@ package Vhdl.Elocations is
    --   Get/Set_Port_Map_Location (Field2)
 
    -- Iir_Kind_Block_Statement (L4)
+   --
+   --   Get/Set_Start_Location (Field1)
    --
    --   Get/Set_End_Location (Field2)
    --
@@ -549,6 +565,8 @@ package Vhdl.Elocations is
 
    -- Iir_Kind_Conditional_Variable_Assignment_Statement (None)
 
+   -- Iir_Kind_Selected_Variable_Assignment_Statement (None)
+
    -- Iir_Kind_Assertion_Statement (None)
 
    -- Iir_Kind_Report_Statement (None)
@@ -638,6 +656,8 @@ package Vhdl.Elocations is
 
    -- Iir_Kind_Pathname_Element (None)
 
+   -- Iir_Kind_Box_Name (None)
+
    -----------------
    --  Attributes --
    -----------------
@@ -703,6 +723,8 @@ package Vhdl.Elocations is
    -- Iir_Kind_Simple_Name_Attribute (None)
    -- Iir_Kind_Instance_Name_Attribute (None)
    -- Iir_Kind_Path_Name_Attribute (None)
+
+   -- Iir_Kind_Converse_Attribute (None)
 
    -- Iir_Kind_Behavior_Attribute (None)
    -- Iir_Kind_Structure_Attribute (None)

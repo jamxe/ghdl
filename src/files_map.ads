@@ -34,17 +34,21 @@ package Files_Map is
    --  Otherwise, return the concatenation of DIRECTORY and NAME.
    function Get_Pathname (Directory : Name_Id; Name : Name_Id) return String;
 
-   --  If NAME contains a directory separator, move it to the DIRECTORY name.
-   --  At the return point, NAME has no directory components.
-   procedure Normalize_Pathname
-     (Directory : in out Name_Id; Name : in out Name_Id);
-
    --  Return an entry for a filename.  Null_Identifier for DIRECTORY means
    --  current directory.
    --  Load the filename if necessary.
    --  Return No_Source_File_Entry if the file does not exist.
    function Read_Source_File (Directory : Name_Id; Name : Name_Id)
                               return Source_File_Entry;
+
+   --  Same as Read_Source_File, but first normalize DIRECTORY and NAME.
+   function Read_Source_File_Normalize (Directory : Name_Id; Name: Name_Id)
+                                       return Source_File_Entry;
+
+   --  Find a source_file by DIRECTORY and NAME.
+   --  Return No_Source_File_Entry if not already opened.
+   function Find_Source_File (Directory : Name_Id; Name: Name_Id)
+                             return Source_File_Entry;
 
    --  Reserve an entry, but do not read any file.
    --  The length should includes the two terminal EOT.
@@ -91,16 +95,15 @@ package Files_Map is
    procedure Free_Source_File (File : Source_File_Entry);
 
    --  Relocate location LOC (which must be in the reference of INST_FILE)
-   --  for instrnace INST_FILE.
-   function Instance_Relocate
-     (Inst_File : Source_File_Entry; Loc : Location_Type)
-     return Location_Type;
+   --  for instance INST_FILE.
+   function Instance_Relocate (Inst_File : Source_File_Entry;
+                               Loc : Location_Type) return Location_Type;
 
    --  If LOC is a location of an instance (in a file created by
    --  create_instance_source_file), return the location where the instance
    --  has been created.  Otherwise, return No_Location.
-   function Location_Instance_To_Location
-     (Loc : Location_Type) return Location_Type;
+   function Location_Instance_To_Location (Loc : Location_Type)
+                                          return Location_Type;
 
    --  If POS points to the start of the gap of FILE, it will be updated
    --  to the next character after the gap.
@@ -269,6 +272,12 @@ package Files_Map is
    --  Free all memory.
    procedure Finalize;
 
+   --  Debug procedures.
+
+   --  Disp info about all source files
+   procedure Debug_Source_Files;
+   procedure Debug_Source_File (File : Source_File_Entry);
+
 private
    Lines_Table_Init : Natural := 64;
 
@@ -347,8 +356,4 @@ private
       Table_Low_Bound => No_Source_File_Entry + 1,
       Table_Initial => 16);
 
-   --  Debug procedures.
-
-   --  Disp info about all source files
-   procedure Debug_Source_Files;
 end Files_Map;

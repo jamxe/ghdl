@@ -36,7 +36,6 @@ with Netlists.Folds;
 
 with Elab.Vhdl_Objtypes; use Elab.Vhdl_Objtypes;
 with Elab.Vhdl_Values; use Elab.Vhdl_Values;
-with Elab.Vhdl_Types;
 
 with Vhdl.Utils; use Vhdl.Utils;
 with Vhdl.Errors;
@@ -53,12 +52,22 @@ with Synth.Vhdl_Environment; use Synth.Vhdl_Environment.Env;
 with Synth.Vhdl_Stmts; use Synth.Vhdl_Stmts;
 with Synth.Vhdl_Decls; use Synth.Vhdl_Decls;
 with Synth.Vhdl_Expr; use Synth.Vhdl_Expr;
+with Synth.Vhdl_Oper;
 with Synth.Source; use Synth.Source;
 with Synth.Errors;
 with Synth.Vhdl_Context; use Synth.Vhdl_Context;
 
 package body Synth.Vhdl_Insts is
    Global_Base_Instance : Base_Instance_Acc;
+
+   package Instance_Tables is new Dyn_Tables
+     (Table_Component_Type => Synth_Instance_Acc,
+      Table_Index_Type => Integer,
+      Table_Low_Bound => 0);
+
+   procedure Synth_Instance_Design (Syn_Inst : Synth_Instance_Acc;
+                                    Entity : Node;
+                                    Arch : Node);
 
    function Mode_To_Port_Kind (Mode : Iir_Mode) return Port_Kind is
    begin
@@ -479,7 +488,9 @@ package body Synth.Vhdl_Insts is
          Inter := Get_Chain (Inter);
       end loop;
 
-      --  Allocate values and count inputs and outputs
+      --  There are already valtyp for ports (created during elab), but they
+      --  are signals.  Convert ports valtyp to nets/wires.
+      --  Count inputs and outputs.
       Inter := Get_Port_Chain (Decl);
       Nbr_Inputs := 0;
       Nbr_Outputs := 0;
@@ -580,22 +591,29 @@ package body Synth.Vhdl_Insts is
    end Build;
 
    package Insts_Interning is new Interning
-     (Params_Type => Inst_Params,
+     (Key_Type => Inst_Params,
       Object_Type => Inst_Object,
       Hash => Hash,
       Build => Build,
       Equal => Equal);
 
-   function Is_Arch_Black_Box (Arch : Node) return Boolean
+   function Is_Arch_Black_Box (Inst : Synth_Instance_Acc; Arch : Node)
+                              return Boolean
    is
       use Vhdl.Std_Package;
       use Elab.Vhdl_Errors;
       Value : Node;
       Spec : Node;
       Attr_Decl : Node;
+      Lib : Node;
       Val : Node;
    begin
       if Arch = Null_Node then
+         return True;
+      end if;
+
+      Lib := Get_Library (Get_Design_File (Get_Design_Unit (Arch)));
+      if Get_Vendor_Library_Flag (Lib) then
          return True;
       end if;
 
@@ -610,7 +628,7 @@ package body Synth.Vhdl_Insts is
                when Std_Names.Name_Syn_Black_Box =>
                   if Get_Type (Attr_Decl) /= Boolean_Type_Definition then
                      Error_Msg_Elab
-                       (+Attr_Decl,
+                       (Inst, Attr_Decl,
                         "type of syn_black_box attribute must be boolean");
                      return True;
                   end if;
@@ -619,7 +637,7 @@ package body Synth.Vhdl_Insts is
                      --  Do we really require the value to be static if the
                      --  architecture has been elaborated ?
                      Error_Msg_Elab
-                       (+Spec, "value of syn_black_box must be static");
+                       (Inst, Spec, "value of syn_black_box must be static");
                      return True;
                   end if;
                   if Vhdl.Evaluation.Eval_Pos (Val) /= 0 then
@@ -636,7 +654,7 @@ package body Synth.Vhdl_Insts is
 
    function Interning_Get (Param : Inst_Params) return Inst_Object is
    begin
-      if Is_Arch_Black_Box (Param.Arch) then
+      if Is_Arch_Black_Box (Param.Syn_Inst, Param.Arch) then
          return Insts_Interning.Get ((Decl => Param.Decl,
                                       Arch => Null_Node,
                                       Config => Null_Node,
@@ -646,6 +664,22 @@ package body Synth.Vhdl_Insts is
          return Insts_Interning.Get (Param);
       end if;
    end Interning_Get;
+
+   function Synth_Function_Conversion (Syn_Inst : Synth_Instance_Acc;
+                                       Actual : Node;
+                                       Conv : Node) return Valtyp
+   is
+      Imp : constant Node := Get_Implementation (Conv);
+   begin
+      if Get_Implicit_Definition (Imp) = Iir_Predefined_None then
+         --  This is an abuse, but it works like a user operator.
+         return Synth_User_Operator (Syn_Inst, Actual, Null_Node, Conv);
+      else
+         --  An implicit definition.
+         return Synth.Vhdl_Oper.Synth_Monadic_Operation
+           (Syn_Inst, Imp, Actual, Conv);
+      end if;
+   end Synth_Function_Conversion;
 
    function Synth_Single_Input_Assoc (Syn_Inst : Synth_Instance_Acc;
                                       Inter_Typ : Type_Acc;
@@ -667,7 +701,7 @@ package body Synth.Vhdl_Insts is
             when Iir_Kind_Function_Call =>
                pragma Assert (Act_Inst = Syn_Inst);
                --  This is an abuse, but it works like a user operator.
-               Act := Synth_User_Operator (Syn_Inst, Actual, Null_Node, Conv);
+               Act := Synth_Function_Conversion (Syn_Inst, Actual, Conv);
             when Iir_Kind_Type_Conversion =>
                Act := Synth_Type_Conversion (Syn_Inst, Conv);
             when others =>
@@ -720,10 +754,9 @@ package body Synth.Vhdl_Insts is
                                           Inter_Typ : Type_Acc;
                                           Assoc : Node) return Net
    is
-      pragma Unreferenced (Inter_Typ);
+      pragma Unreferenced (Inter_Inst);
       use Netlists.Concats;
       Ctxt : constant Context_Acc := Get_Build (Syn_Inst);
-      Formal_Typ : Type_Acc;
       Iassoc : Node;
       V : Valtyp;
       Typ : Type_Acc;
@@ -735,10 +768,6 @@ package body Synth.Vhdl_Insts is
    begin
       Value_Offset_Tables.Init (Els, 16);
 
-      --  FIXME: should it be unshared ?
-      Formal_Typ := Elab.Vhdl_Types.Synth_Subtype_Indication
-        (Inter_Inst, Get_Actual_Type (Assoc));
-
       Iassoc := Get_Chain (Assoc);
       while Iassoc /= Null_Node
         and then not Get_Whole_Association_Flag (Iassoc)
@@ -746,7 +775,7 @@ package body Synth.Vhdl_Insts is
          --  For each individual assoc:
          --   1. compute type and offset
          Synth_Individual_Formal
-           (Syn_Inst, Formal_Typ, Get_Formal (Iassoc), Typ, Offs);
+           (Syn_Inst, Inter_Typ, Get_Formal (Iassoc), Typ, Offs);
 
          --   2. synth expression
          V := Synth_Single_Input_Assoc
@@ -771,10 +800,11 @@ package body Synth.Vhdl_Insts is
          N_Off := N_Off + V.Typ.W;
          Append (Concat, Get_Net (Ctxt, V));
       end loop;
-      Value_Offset_Tables.Free (Els);
 
       --   3. connect
       Build (Ctxt, Concat, N);
+
+      Value_Offset_Tables.Free (Els);
       return N;
    end Synth_Individual_Input_Assoc;
 
@@ -818,7 +848,8 @@ package body Synth.Vhdl_Insts is
    procedure Synth_Individual_Output_Assoc (Outp : Net;
                                             Syn_Inst : Synth_Instance_Acc;
                                             Inter_Typ : Type_Acc;
-                                            Assoc : Node)
+                                            Assoc : Node;
+                                            Add_Port : Boolean)
    is
       Marker : Mark_Type;
       Iassoc : Node;
@@ -830,8 +861,12 @@ package body Synth.Vhdl_Insts is
    begin
       Mark_Expr_Pool (Marker);
 
-      Port := Builders.Build_Port (Get_Build (Syn_Inst), Outp);
-      Set_Location (Port, Assoc);
+      if Add_Port then
+         Port := Builders.Build_Port (Get_Build (Syn_Inst), Outp);
+         Set_Location (Port, Assoc);
+      else
+         Port := Outp;
+      end if;
 
       Iassoc := Get_Chain (Assoc);
       while Iassoc /= Null_Node
@@ -855,14 +890,16 @@ package body Synth.Vhdl_Insts is
       end loop;
    end Synth_Individual_Output_Assoc;
 
+   --  Associate output according to ASSOC.
+   --  If ADD_PORT is true, a port gate is added.
    procedure Synth_Output_Assoc (Outp : Net;
                                  Syn_Inst : Synth_Instance_Acc;
                                  Assoc : Node;
                                  Inter_Inst : Synth_Instance_Acc;
-                                 Inter : Node)
+                                 Inter : Node;
+                                 Add_Port : Boolean)
    is
       Marker : Mark_Type;
-      Actual : Node;
       Formal_Typ : Type_Acc;
       Port : Net;
       O : Valtyp;
@@ -872,23 +909,24 @@ package body Synth.Vhdl_Insts is
       case Get_Kind (Assoc) is
          when Iir_Kind_Association_Element_Open =>
             --  Not connected.
-            return;
+            null;
          when Iir_Kinds_Association_Element_By_Actual =>
-            Actual := Get_Actual (Assoc);
+            Mark_Expr_Pool (Marker);
+            --  Create a port gate (so that is has a name).
+            if Add_Port then
+               Port := Builders.Build_Port (Get_Build (Syn_Inst), Outp);
+               Set_Location (Port, Assoc);
+            else
+               Port := Outp;
+            end if;
+            O := Create_Value_Net (Port, Formal_Typ);
+            --  Assign the port output to the actual (a net).
+            Synth_Assignment (Syn_Inst, Get_Actual (Assoc), O, Assoc);
+            Release_Expr_Pool (Marker);
          when others =>
             Synth_Individual_Output_Assoc
-              (Outp, Syn_Inst, Formal_Typ, Assoc);
-            return;
+              (Outp, Syn_Inst, Formal_Typ, Assoc, Add_Port);
       end case;
-
-      Mark_Expr_Pool (Marker);
-      --  Create a port gate (so that is has a name).
-      Port := Builders.Build_Port (Get_Build (Syn_Inst), Outp);
-      Set_Location (Port, Assoc);
-      O := Create_Value_Net (Port, Formal_Typ);
-      --  Assign the port output to the actual (a net).
-      Synth_Assignment (Syn_Inst, Actual, O, Assoc);
-      Release_Expr_Pool (Marker);
    end Synth_Output_Assoc;
 
    procedure Inst_Input_Connect (Syn_Inst : Synth_Instance_Acc;
@@ -983,6 +1021,7 @@ package body Synth.Vhdl_Insts is
       Assoc : Node;
       Assoc_Inter : Node;
       Inter : Node;
+      Inter_Vt : Valtyp;
       Inter_Typ : Type_Acc;
       Nbr_Inputs : Port_Nbr;
       Nbr_Outputs : Port_Nbr;
@@ -997,7 +1036,11 @@ package body Synth.Vhdl_Insts is
       while Is_Valid (Assoc) loop
          if Get_Whole_Association_Flag (Assoc) then
             Inter := Get_Association_Interface (Assoc, Assoc_Inter);
-            Inter_Typ := Get_Subtype_Object (Ent_Inst, Get_Type (Inter));
+
+            --  Get the type of the interface as it has been built by
+            --  elaboration.
+            Inter_Vt := Get_Value (Ent_Inst, Inter);
+            Inter_Typ := Inter_Vt.Typ;
 
             case Mode_To_Port_Kind (Get_Mode (Inter)) is
                when Port_In =>
@@ -1013,7 +1056,7 @@ package body Synth.Vhdl_Insts is
                     (Syn_Inst, Inst, Nbr_Outputs, Inter_Typ, N);
 
                   Synth_Output_Assoc
-                    (N, Syn_Inst, Assoc, Ent_Inst, Inter);
+                    (N, Syn_Inst, Assoc, Ent_Inst, Inter, True);
 
             end case;
             pragma Assert (Areapools.Is_At_Mark (Expr_Pool, Marker));
@@ -1113,6 +1156,107 @@ package body Synth.Vhdl_Insts is
       pragma Assert (Is_Expr_Pool_Empty);
    end Synth_Direct_Instantiation_Statement;
 
+   procedure Synth_Flat_Instantiation_Statement
+     (Syn_Inst : Synth_Instance_Acc;
+      Stmt : Node;
+      Assocs : Node;
+      Sub_Inst : Synth_Instance_Acc;
+      Entity : Node;
+      Arch : Node)
+   is
+      Ctxt : constant Context_Acc := Get_Build (Syn_Inst);
+      Inter : Node;
+      Inter_Typ : Type_Acc;
+      Val : Valtyp;
+      N : Net;
+      Name : Sname;
+      Wid : Wire_Id;
+   begin
+      pragma Assert (Is_Expr_Pool_Empty);
+
+      Name := New_Sname_User (Get_Identifier (Stmt), Get_Sname (Syn_Inst));
+      Set_Extra (Sub_Inst, Syn_Inst, Name);
+
+      --  There are already valtyp for ports (created during elab), but they
+      --  are signals.  Convert ports valtyp to nets/wires.
+      Inter := Get_Port_Chain (Entity);
+      Current_Pool := Process_Pool'Access;
+      while Is_Valid (Inter) loop
+         Inter_Typ := Get_Value (Sub_Inst, Inter).Typ;
+
+         Name := New_Sname_User (Get_Identifier (Inter), Get_Sname (Sub_Inst));
+         N := Build_Signal
+           (Ctxt, New_Internal_Name (Ctxt, Name), Get_Type_Width (Inter_Typ));
+         Set_Location (N, Inter);
+
+         case Mode_To_Port_Kind (Get_Mode (Inter)) is
+            when Port_In =>
+               --  TODO: default value (isignal).
+               Val := Create_Value_Net (N, Inter_Typ);
+            when Port_Out
+              | Port_Inout =>
+               Wid := Alloc_Wire (Wire_Output, (Inter, Inter_Typ));
+               Set_Wire_Gate (Wid, N);
+               Val := Create_Value_Wire (Wid, Inter_Typ, Current_Pool);
+         end case;
+         Replace_Signal (Sub_Inst, Inter, Val);
+         Inter := Get_Chain (Inter);
+      end loop;
+      Current_Pool := Expr_Pool'Access;
+
+      --  Connections.
+      Push_Phi;
+
+      declare
+         Marker : Mark_Type;
+
+         Assoc : Node;
+         Assoc_Inter : Node;
+         Inter : Node;
+         Inter_Typ : Type_Acc;
+         N : Net;
+         Vt : Valtyp;
+         Inst : Instance;
+      begin
+         Mark_Expr_Pool (Marker);
+
+         Assoc := Get_Port_Map_Aspect_Chain (Assocs);
+         Assoc_Inter := Get_Port_Chain (Entity);
+         while Is_Valid (Assoc) loop
+            if Get_Whole_Association_Flag (Assoc) then
+               Inter := Get_Association_Interface (Assoc, Assoc_Inter);
+               Inter_Typ := Get_Subtype_Object (Sub_Inst, Get_Type (Inter));
+               Vt := Get_Value (Sub_Inst, Inter);
+
+               case Mode_To_Port_Kind (Get_Mode (Inter)) is
+                  when Port_In =>
+                     --  Connect the net to the input.
+                     N := Synth_Input_Assoc
+                       (Syn_Inst, Assoc, Sub_Inst, Inter, Inter_Typ);
+                     if N /= No_Net then
+                        --  Ignore errors.
+                        Inst := Get_Net_Parent (Get_Value_Net (Vt.Val));
+                        Connect (Get_Input (Inst, 0), N);
+                     end if;
+
+                  when Port_Out
+                    | Port_Inout =>
+                     N := Get_Wire_Gate (Get_Value_Wire (Vt.Val));
+                     Synth_Output_Assoc
+                       (N, Syn_Inst, Assoc, Sub_Inst, Inter, False);
+               end case;
+
+               Release_Expr_Pool (Marker);
+            end if;
+            Next_Association_Interface (Assoc, Assoc_Inter);
+         end loop;
+      end;
+
+      Pop_And_Merge_Phi (Ctxt, Get_Location (Stmt));
+
+      Synth_Instance_Design (Sub_Inst, Entity, Arch);
+   end Synth_Flat_Instantiation_Statement;
+
    procedure Synth_Design_Instantiation_Statement
      (Syn_Inst : Synth_Instance_Acc; Stmt : Node)
    is
@@ -1122,8 +1266,16 @@ package body Synth.Vhdl_Insts is
       Ent : constant Node := Get_Entity (Arch);
       Config : constant Node := Get_Instance_Config (Sub_Inst);
    begin
-      Synth_Direct_Instantiation_Statement
-        (Syn_Inst, Stmt, Sub_Inst, Ent, Arch, Config);
+      if Flag_Keep_Hierarchy then
+         Synth_Direct_Instantiation_Statement
+           (Syn_Inst, Stmt, Sub_Inst, Ent, Arch, Config);
+      else
+         --  TODO: Dependencies, Set files root dir
+         pragma Assert (Is_Expr_Pool_Empty);
+
+         Synth_Flat_Instantiation_Statement
+           (Syn_Inst, Stmt, Stmt, Sub_Inst, Ent, Arch);
+      end if;
    end Synth_Design_Instantiation_Statement;
 
    procedure Synth_Blackbox_Instantiation_Statement
@@ -1189,8 +1341,6 @@ package body Synth.Vhdl_Insts is
       pragma Assert (Is_Expr_Pool_Empty);
       pragma Assert (Get_Kind (Aspect) = Iir_Kind_Entity_Aspect_Entity);
 
-      Push_Phi;
-
       Inst_Name := New_Sname_User (Get_Identifier (Stmt),
                                    Get_Sname (Syn_Inst));
 
@@ -1218,7 +1368,7 @@ package body Synth.Vhdl_Insts is
                   when Port_In =>
                      N := Synth_Input_Assoc
                        (Syn_Inst, Assoc, Comp_Inst, Inter, Inter_Typ);
-                     Val := Create_Value_Net (N, Inter_Typ);
+                     Val := Create_Value_Net (N, Inter_Typ, Instance_Pool);
                   when Port_Out
                     | Port_Inout =>
                      Val := Create_Value_Wire
@@ -1236,53 +1386,68 @@ package body Synth.Vhdl_Insts is
       Sub_Inst := Get_Component_Instance (Comp_Inst);
       Arch := Get_Source_Scope (Sub_Inst);
       Sub_Config := Get_Instance_Config (Sub_Inst);
-      if Get_Kind (Arch) = Iir_Kind_Foreign_Module then
-         M := Synth_Foreign_Module
-           (Global_Base_Instance, Get_Instance_Foreign (Sub_Inst),
-            Sub_Inst, Arch);
 
-         Inst := New_Instance (Get_Instance_Module (Syn_Inst), M, Inst_Name);
-         Set_Location (Inst, Stmt);
+      if Flag_Keep_Hierarchy then
+         Push_Phi;
 
-         Synth_Instantiate_Module_Ports
-           (Comp_Inst, Inst, Sub_Inst, Arch,
-            Get_Port_Map_Aspect_Chain (Bind));
+         if Get_Kind (Arch) = Iir_Kind_Foreign_Module then
+            M := Synth_Foreign_Module
+              (Global_Base_Instance, Get_Instance_Foreign (Sub_Inst),
+               Sub_Inst, Arch);
+
+            Inst := New_Instance
+              (Get_Instance_Module (Syn_Inst), M, Inst_Name);
+            Set_Location (Inst, Stmt);
+
+            Synth_Instantiate_Module_Ports
+              (Comp_Inst, Inst, Sub_Inst, Arch,
+               Get_Port_Map_Aspect_Chain (Bind));
+         else
+            Ent := Get_Entity (Arch);
+
+            --  Elaborate generic + map aspect for the entity instance.
+            Set_Extra (Sub_Inst, Comp_Inst,
+                       New_Sname_User (Get_Identifier (Ent), No_Sname));
+
+            --  Search if corresponding module has already been used.
+            --  If not create a new module
+            --   * create a name from the generics and the library
+            --   * create inputs/outputs
+            --   * add it to the list of module to be synthesized.
+            Inst_Obj := Interning_Get ((Decl => Ent,
+                                        Arch => Arch,
+                                        Config => Sub_Config,
+                                        Syn_Inst => Sub_Inst,
+                                        Encoding => Name_Hash));
+
+            --  TODO: free sub_inst.
+
+            Inst := New_Instance (Get_Instance_Module (Syn_Inst),
+                                  Inst_Obj.M, Inst_Name);
+            Set_Location (Inst, Stmt);
+
+            Synth_Instantiate_Module_Ports
+              (Comp_Inst, Inst, Inst_Obj.Syn_Inst, Inst_Obj.Decl,
+               Get_Port_Map_Aspect_Chain (Bind));
+            Synth_Instantiate_Module_Generics (Inst, Inst_Obj);
+         end if;
+
+         pragma Unreferenced (M);
+
       else
-         Ent := Get_Entity (Arch);
+         Synth_Flat_Instantiation_Statement
+           (Comp_Inst, Component, Bind,
+            Get_Component_Instance (Comp_Inst), Get_Entity (Arch), Arch);
 
-         --  Elaborate generic + map aspect for the entity instance.
-         Set_Extra (Sub_Inst, Comp_Inst,
-                    New_Sname_User (Get_Identifier (Ent), No_Sname));
-
-         --  Search if corresponding module has already been used.
-         --  If not create a new module
-         --   * create a name from the generics and the library
-         --   * create inputs/outputs
-         --   * add it to the list of module to be synthesized.
-         Inst_Obj := Interning_Get ((Decl => Ent,
-                                     Arch => Arch,
-                                     Config => Sub_Config,
-                                     Syn_Inst => Sub_Inst,
-                                     Encoding => Name_Hash));
-
-         --  TODO: free sub_inst.
-
-         Inst := New_Instance (Get_Instance_Module (Syn_Inst),
-                               Inst_Obj.M, Inst_Name);
-         Set_Location (Inst, Stmt);
-
-         Synth_Instantiate_Module_Ports
-           (Comp_Inst, Inst, Inst_Obj.Syn_Inst, Inst_Obj.Decl,
-            Get_Port_Map_Aspect_Chain (Bind));
-         Synth_Instantiate_Module_Generics (Inst, Inst_Obj);
+         Push_Phi;
       end if;
-
-      pragma Unreferenced (M);
 
       --  Connect out from component to instance.
       --  Instantiate the module
-      --  Elaborate ports + map aspect for the inputs (component then entity)
-      --  Elaborate ports + map aspect for the outputs (entity then component)
+      --  Elaborate ports + map aspect for the inputs
+      --    (component then entity)
+      --  Elaborate ports + map aspect for the outputs
+      --    (entity then component)
       declare
          Assoc : Node;
          Assoc_Inter : Node;
@@ -1301,7 +1466,8 @@ package body Synth.Vhdl_Insts is
                if Mode_To_Port_Kind (Get_Mode (Inter)) = Port_Out then
                   O := Get_Value (Comp_Inst, Inter);
                   Port := Get_Net (Ctxt, O);
-                  Synth_Output_Assoc (Port, Syn_Inst, Assoc, Comp_Inst, Inter);
+                  Synth_Output_Assoc
+                    (Port, Syn_Inst, Assoc, Comp_Inst, Inter, True);
                   Nbr_Outputs := Nbr_Outputs + 1;
                end if;
             end if;
@@ -1316,60 +1482,111 @@ package body Synth.Vhdl_Insts is
       Release_Expr_Pool (Marker);
    end Synth_Component_Instantiation_Statement;
 
-   procedure Synth_Dependencies (Parent_Inst : Synth_Instance_Acc; Unit : Node)
+   procedure Synth_Dependencies (Parent_Inst : Synth_Instance_Acc;
+                                 Unit : Node;
+                                 Pkgs : in out Instance_Tables.Instance);
+
+   procedure Synth_Dependency (Parent_Inst : Synth_Instance_Acc;
+                               Dep : Node;
+                               Pkgs : in out Instance_Tables.Instance)
+   is
+      Unit : constant Node := Get_Library_Unit (Dep);
+      Inst : Synth_Instance_Acc;
+   begin
+      case Iir_Kinds_Library_Unit (Get_Kind (Unit)) is
+         when Iir_Kind_Entity_Declaration =>
+            null;
+         when Iir_Kind_Configuration_Declaration =>
+            null;
+         when Iir_Kind_Context_Declaration =>
+            null;
+         when Iir_Kind_Package_Declaration =>
+            if Is_Uninstantiated_Package (Unit) then
+               return;
+            end if;
+
+            Inst := Get_Package_Object (Parent_Inst, Unit);
+            if Get_Package_Used_Flag (Inst) then
+               --  Already handled.
+               return;
+            else
+               Set_Package_Used_Flag (Inst, True);
+            end if;
+
+            declare
+               Bod : constant Node := Get_Package_Body (Unit);
+               Bod_Unit : Node;
+            begin
+               Instance_Tables.Append (Pkgs, Inst);
+
+               Synth_Dependencies (Parent_Inst, Dep, Pkgs);
+
+               if not Get_Package_Elab_Flag (Inst) then
+                  Synth_Concurrent_Package_Declaration
+                    (Parent_Inst, Unit, True);
+               end if;
+
+               --  Do not try to elaborate math_real body: there are
+               --  functions with loop.  Currently, it tries to create
+               --  signals, which is not possible during package
+               --  elaboration.
+               if Bod /= Null_Node
+                 and then Unit /= Vhdl.Ieee.Math_Real.Math_Real_Pkg
+               then
+                  Bod_Unit := Get_Design_Unit (Bod);
+                  Synth_Dependencies (Parent_Inst, Bod_Unit, Pkgs);
+                  if not Get_Package_Elab_Flag (Inst) then
+                     Synth_Concurrent_Package_Body
+                       (Parent_Inst, Unit, Bod, True);
+                  end if;
+               end if;
+
+               Set_Package_Elab_Flag (Inst);
+            end;
+         when Iir_Kind_Package_Instantiation_Declaration =>
+            Inst := Get_Package_Object (Parent_Inst, Unit);
+            if Get_Package_Used_Flag (Inst) then
+               --  Already handled.
+               return;
+            else
+               Set_Package_Used_Flag (Inst, True);
+            end if;
+
+            Instance_Tables.Append (Pkgs, Inst);
+
+            Synth_Dependencies (Parent_Inst, Dep, Pkgs);
+
+            if not Get_Package_Elab_Flag (Inst) then
+               Synth_Concurrent_Package_Instantiation
+                 (Parent_Inst, Unit, True);
+            end if;
+
+            Set_Package_Elab_Flag (Inst);
+         when Iir_Kind_Package_Body =>
+            null;
+         when Iir_Kind_Architecture_Body =>
+            null;
+         when Iir_Kinds_Verification_Unit =>
+            null;
+         when Iir_Kind_Foreign_Module =>
+            raise Internal_Error;
+      end case;
+   end Synth_Dependency;
+
+   procedure Synth_Dependencies (Parent_Inst : Synth_Instance_Acc;
+                                 Unit : Node;
+                                 Pkgs : in out Instance_Tables.Instance)
    is
       Dep_List : constant Node_List := Get_Dependence_List (Unit);
       Dep_It : List_Iterator;
       Dep : Node;
-      Dep_Unit : Node;
    begin
       Dep_It := List_Iterate (Dep_List);
       while Is_Valid (Dep_It) loop
          Dep := Get_Element (Dep_It);
-         if Get_Kind (Dep) = Iir_Kind_Design_Unit
-           and then not Get_Elab_Flag (Dep)
-         then
-            Set_Elab_Flag (Dep, True);
-            Synth_Dependencies (Parent_Inst, Dep);
-            Dep_Unit := Get_Library_Unit (Dep);
-            case Iir_Kinds_Library_Unit (Get_Kind (Dep_Unit)) is
-               when Iir_Kind_Entity_Declaration =>
-                  null;
-               when Iir_Kind_Configuration_Declaration =>
-                  null;
-               when Iir_Kind_Context_Declaration =>
-                  null;
-               when Iir_Kind_Package_Declaration =>
-                  declare
-                     Bod : constant Node := Get_Package_Body (Dep_Unit);
-                     Bod_Unit : Node;
-                  begin
-                     Synth_Concurrent_Package_Declaration
-                       (Parent_Inst, Dep_Unit);
-                     --  Do not try to elaborate math_real body: there are
-                     --  functions with loop.  Currently, try create signals,
-                     --  which is not possible during package elaboration.
-                     if Bod /= Null_Node
-                       and then Dep_Unit /= Vhdl.Ieee.Math_Real.Math_Real_Pkg
-                     then
-                        Bod_Unit := Get_Design_Unit (Bod);
-                        Synth_Dependencies (Parent_Inst, Bod_Unit);
-                        Synth_Concurrent_Package_Body
-                          (Parent_Inst, Dep_Unit, Bod);
-                     end if;
-                  end;
-               when Iir_Kind_Package_Instantiation_Declaration =>
-                  Synth_Concurrent_Package_Instantiation
-                    (Parent_Inst, Dep_Unit);
-               when Iir_Kind_Package_Body =>
-                  null;
-               when Iir_Kind_Architecture_Body =>
-                  null;
-               when Iir_Kinds_Verification_Unit =>
-                  null;
-               when Iir_Kind_Foreign_Module =>
-                  raise Internal_Error;
-            end case;
+         --  Do not care about aspects, handle only unit dependencies.
+         if Get_Kind (Dep) = Iir_Kind_Design_Unit then
+            Synth_Dependency (Parent_Inst, Dep, Pkgs);
          end if;
          Next (Dep_It);
       end loop;
@@ -1408,14 +1625,10 @@ package body Synth.Vhdl_Insts is
       Insts_Interning.Init;
 
       if Flags.Flag_Debug_Init then
-         Elab.Debugger.Debug_Init (Arch);
+         Elab.Debugger.Debug_Elab (Syn_Inst);
       end if;
 
       pragma Assert (Is_Expr_Pool_Empty);
-
-      --  Dependencies first.
-      Synth_Dependencies (Root_Instance, Get_Design_Unit (Entity));
-      Synth_Dependencies (Root_Instance, Get_Design_Unit (Arch));
 
       Set_Extra
         (Syn_Inst, Base, New_Sname_User (Get_Identifier (Entity), No_Sname));
@@ -1444,7 +1657,7 @@ package body Synth.Vhdl_Insts is
       N : Net;
    begin
       pragma Assert (Val.Val.Kind = Value_Net);
-      N := Get_Value_Net (Val.Val);
+      --  Get the net from the port(s).
       Inst_Output_Connect (Syn_Inst, Self_Inst, Idx, Val.Typ, N);
       Set_Value_Net (Val.Val, N);
    end Create_Input_Wire;
@@ -1526,68 +1739,13 @@ package body Synth.Vhdl_Insts is
       end loop;
    end Synth_Verification_Units;
 
-   procedure Synth_Instance (Inst : Inst_Object)
-   is
-      Entity : constant Node := Inst.Decl;
-      Arch : constant Node := Inst.Arch;
-      Syn_Inst : constant Synth_Instance_Acc := Inst.Syn_Inst;
-      Marker : Mark_Type;
-      Self_Inst : Instance;
-      Inter : Node;
-      Vt : Valtyp;
-      Nbr_Inputs : Port_Nbr;
-      Nbr_Outputs : Port_Nbr;
+   procedure Synth_Instance_Design (Syn_Inst : Synth_Instance_Acc;
+                                    Entity : Node;
+                                    Arch : Node) is
    begin
-      if Arch = Null_Node then
-         --  Black box.
-         return;
-      end if;
-
-      if Flag_Verbose then
-         Errors.Info_Msg_Synth (+Entity, "synthesizing %n", (1 => +Entity));
-      end if;
-
-      pragma Assert (Is_Expr_Pool_Empty);
-
-      --  Save the current architecture, so that files can be open using a
-      --  path relative to the architecture filename.
-      Elab.Vhdl_Files.Set_Design_Unit (Arch);
-
-      Synth_Dependencies (Root_Instance, Get_Design_Unit (Arch));
-
-      Set_Instance_Module (Syn_Inst, Inst.M);
-      Self_Inst := Get_Self_Instance (Inst.M);
-      Set_Location (Self_Inst, Entity);
-
-      pragma Assert (Is_Expr_Pool_Empty);
-
-      Areapools.Mark (Marker, Process_Pool);
-      Instance_Pool := Process_Pool'Access;
-
-      --  Create wires for inputs and outputs.
-      Inter := Get_Port_Chain (Entity);
-      Nbr_Inputs := 0;
-      Nbr_Outputs := 0;
-      while Is_Valid (Inter) loop
-         Vt := Get_Value (Syn_Inst, Inter);
-         case Mode_To_Port_Kind (Get_Mode (Inter)) is
-            when Port_In =>
-               Create_Input_Wire (Syn_Inst, Self_Inst, Nbr_Inputs, Vt);
-            when Port_Out
-              | Port_Inout =>
-               Create_Output_Wire
-                 (Syn_Inst, Self_Inst, Inter, Nbr_Outputs, Vt);
-         end case;
-         pragma Assert (Is_Expr_Pool_Empty);
-         Inter := Get_Chain (Inter);
-      end loop;
-
-      --  Apply configuration.
-      --  FIXME: what about inner block configuration ?
-      pragma Assert (Get_Kind (Inst.Config) = Iir_Kind_Block_Configuration);
-
       --  Entity
-      Synth_Concurrent_Declarations (Syn_Inst, Get_Declaration_Chain (Entity));
+      Synth_Concurrent_Declarations
+        (Syn_Inst, Get_Declaration_Chain (Entity), False);
       if not Is_Error (Syn_Inst) then
          Synth_Concurrent_Statements
            (Syn_Inst, Get_Concurrent_Statement_Chain (Entity));
@@ -1602,9 +1760,10 @@ package body Synth.Vhdl_Insts is
       pragma Assert (Is_Expr_Pool_Empty);
 
       --  Architecture
+      Instance_Pool := Process_Pool'Access;
       if not Is_Error (Syn_Inst) then
          Synth_Concurrent_Declarations
-           (Syn_Inst, Get_Declaration_Chain (Arch));
+           (Syn_Inst, Get_Declaration_Chain (Arch), False);
       end if;
 
       pragma Assert (Is_Expr_Pool_Empty);
@@ -1633,6 +1792,130 @@ package body Synth.Vhdl_Insts is
       Finalize_Declarations (Syn_Inst, Get_Declaration_Chain (Arch));
       Finalize_Declarations (Syn_Inst, Get_Declaration_Chain (Entity));
       Finalize_Declarations (Syn_Inst, Get_Port_Chain (Entity));
+   end Synth_Instance_Design;
+
+   procedure Finalize_Package_Declarations
+     (Inst : Synth_Instance_Acc; Decls : Node)
+   is
+      Decl : Node;
+   begin
+      Decl := Decls;
+      while Decl /= Null_Node loop
+         case Get_Kind (Decl) is
+            when Iir_Kind_Constant_Declaration =>
+               declare
+                  Val : Valtyp;
+               begin
+                  if Get_Deferred_Declaration (Decl) = Null_Node
+                    or else Get_Deferred_Declaration_Flag (Decl)
+                  then
+                     Val := Get_Value (Inst, Decl);
+                     if Val.Val.Kind = Value_Const then
+                        Val.Val.C_Net := 0;
+                     end if;
+                  end if;
+               end;
+            when others =>
+               --  TODO: recurse on nested package, nested instantiation
+               null;
+         end case;
+         Decl := Get_Chain (Decl);
+      end loop;
+   end Finalize_Package_Declarations;
+
+   procedure Finalize_Package (Inst : Synth_Instance_Acc)
+   is
+      Pkg : constant Node := Get_Source_Scope (Inst);
+   begin
+      Set_Package_Used_Flag (Inst, False);
+
+      case Get_Kind (Pkg) is
+         when Iir_Kind_Package_Declaration =>
+            declare
+               Bod : constant Node := Get_Package_Body (Pkg);
+            begin
+               Finalize_Package_Declarations
+                 (Inst, Get_Declaration_Chain (Pkg));
+               if Bod /= Null_Node then
+                  Finalize_Package_Declarations
+                    (Inst, Get_Declaration_Chain (Bod));
+               end if;
+            end;
+         when Iir_Kind_Package_Instantiation_Declaration =>
+            --  TODO: generics ?
+            Finalize_Package_Declarations
+              (Inst, Get_Declaration_Chain (Pkg));
+         when others =>
+            Vhdl.Errors.Error_Kind ("finalize_package", Pkg);
+      end case;
+   end Finalize_Package;
+
+   procedure Synth_Instance (Inst : Inst_Object)
+   is
+      Entity : constant Node := Inst.Decl;
+      Arch : constant Node := Inst.Arch;
+      Syn_Inst : constant Synth_Instance_Acc := Inst.Syn_Inst;
+      Pkgs : Instance_Tables.Instance;
+      Marker : Mark_Type;
+      Self_Inst : Instance;
+      Inter : Node;
+      Vt : Valtyp;
+      Nbr_Inputs : Port_Nbr;
+      Nbr_Outputs : Port_Nbr;
+   begin
+      if Arch = Null_Node then
+         --  Black box.
+         return;
+      end if;
+
+      if Flag_Verbose then
+         Errors.Info_Msg_Synth (+Entity, "synthesizing %n", (1 => +Entity));
+      end if;
+
+      pragma Assert (Is_Expr_Pool_Empty);
+
+      --  Save the current architecture, so that files can be open using a
+      --  path relative to the architecture filename.
+      Elab.Vhdl_Files.Set_Current_Design_Unit (Arch);
+
+      Set_Instance_Module (Syn_Inst, Inst.M);
+      Self_Inst := Get_Self_Instance (Inst.M);
+      Set_Location (Self_Inst, Entity);
+
+      pragma Assert (Is_Expr_Pool_Empty);
+
+      Areapools.Mark (Marker, Process_Pool);
+      Instance_Pool := Process_Pool'Access;
+
+      --  Create wires for inputs and outputs.
+      Inter := Get_Port_Chain (Entity);
+      Nbr_Inputs := 0;
+      Nbr_Outputs := 0;
+      while Is_Valid (Inter) loop
+         Vt := Get_Value (Syn_Inst, Inter);
+         case Mode_To_Port_Kind (Get_Mode (Inter)) is
+            when Port_In =>
+               Create_Input_Wire (Syn_Inst, Self_Inst, Nbr_Inputs, Vt);
+            when Port_Out
+              | Port_Inout =>
+               Create_Output_Wire
+                 (Syn_Inst, Self_Inst, Inter, Nbr_Outputs, Vt);
+         end case;
+         pragma Assert (Is_Expr_Pool_Empty);
+         Inter := Get_Chain (Inter);
+      end loop;
+
+      Instance_Tables.Init (Pkgs, 16);
+
+      Synth_Dependencies (Root_Instance, Get_Design_Unit (Entity), Pkgs);
+      Synth_Dependencies (Root_Instance, Get_Design_Unit (Arch), Pkgs);
+
+      Synth_Instance_Design (Syn_Inst, Entity, Arch);
+
+      for I in Instance_Tables.First .. Instance_Tables.Last (Pkgs) loop
+         Finalize_Package (Pkgs.Table (I));
+      end loop;
+      Instance_Tables.Free (Pkgs);
 
       Finalize_Wires;
 

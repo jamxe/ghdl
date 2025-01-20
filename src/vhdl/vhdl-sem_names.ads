@@ -61,6 +61,12 @@ package Vhdl.Sem_Names is
    function Sem_Type_Mark (Name : Iir; Incomplete : Boolean := False)
                           return Iir;
 
+   --  Analyze NAME as a mode view name.
+   --  Returns either a name for a mode view (denoting name or converse
+   --  attribute).
+   --  Return an Iir_Kind_Error in case of error.
+   function Sem_Mode_View_Name (Name : Iir) return Iir;
+
    --  Same as Sem_Name but without any side-effect:
    --  * do not report error
    --  * do not set xrefs
@@ -165,7 +171,7 @@ package Vhdl.Sem_Names is
    function Sem_Terminal_Name (Name : Iir) return Iir;
 
    --  Analyze an external name.
-   procedure Sem_External_Name (Name : Iir);
+   procedure Sem_External_Name (Name : Iir; In_Alias : Boolean);
 
    --  Emit an error for NAME that doesn't match its class CLASS_NAME.
    procedure Error_Class_Match (Name : Iir; Class_Name : String);

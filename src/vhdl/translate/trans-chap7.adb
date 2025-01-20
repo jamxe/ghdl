@@ -260,6 +260,7 @@ package body Trans.Chap7 is
                Assoc : Iir;
                El : Iir;
                Bel : Iir;
+               Etype : Iir;
             begin
                Start_Record_Aggr
                  (List, Get_Ortho_Type (Aggr_Type, Mode_Value));
@@ -274,9 +275,20 @@ package body Trans.Chap7 is
                      if Is_Static_Type (Get_Info (Get_Type (Bel))) = Static
                      then
                         El := Get_Associated_Expr (Assoc);
+                        Etype := Get_Type (El);
+                        if Get_Kind (Etype)
+                          in Iir_Kinds_Discrete_Type_Definition
+                        then
+                           --  If the type is discrete, there can be an
+                           --  implicit conversion.
+                           --  If the type is composite, the type of the
+                           --  expression should be kept in case of unbounded
+                           --  element type (we don't want the unbounded
+                           --  representation).
+                           Etype := Get_Type (Bel);
+                        end if;
                         New_Record_Aggr_El
-                          (List,
-                           Translate_Static_Expression (El, Get_Type (El)));
+                          (List, Translate_Static_Expression (El, Etype));
                      end if;
                      Assoc := Get_Chain (Assoc);
                   end loop;
@@ -777,8 +789,15 @@ package body Trans.Chap7 is
       case Get_Kind (Expr) is
          when Iir_Kind_Range_Expression =>
             return Translate_Range_Expression_Length (Expr);
-         when Iir_Kind_Range_Array_Attribute =>
+         when Iir_Kind_Range_Array_Attribute
+           | Iir_Kind_Reverse_Range_Array_Attribute =>
             return Chap14.Translate_Length_Array_Attribute (Expr, Null_Iir);
+         when Iir_Kinds_Denoting_Name =>
+            return Translate_Range_Length
+              (Get_Subtype_Indication (Get_Named_Entity (Expr)));
+         when Iir_Kind_Integer_Subtype_Definition
+           | Iir_Kind_Enumeration_Subtype_Definition =>
+            return Translate_Range_Length (Get_Range_Constraint (Expr));
          when others =>
             Error_Kind ("translate_range_length", Expr);
       end case;
@@ -853,17 +872,39 @@ package body Trans.Chap7 is
    function Is_A_Derived_Type (Atype : Iir; Parent_Type : Iir) return Boolean
    is
       Ptype : Iir;
+      T : Iir;
    begin
-      --  If ATYPE is a parent type of EXPR_TYPE, then all the constrained
-      --  are inherited and there is nothing to check.
-      Ptype := Atype;
+      --  Optimize: if PARENT_TYPE is an alias of its parent (or if it
+      --  just add a resolution function), use its parent type instead.
+      --  This mainly optimize conversions between std_ulogic_vector and
+      --  std_logic_vector.
+      Ptype := Parent_Type;
+      while Get_Kind (Ptype) = Iir_Kind_Array_Subtype_Definition
+
+        and then Get_Array_Element_Constraint (Ptype) = Null_Iir
       loop
-         if Ptype = Parent_Type then
+         T := Get_Parent_Type (Ptype);
+         exit when T = Null_Iir;
+
+         --  If the index subtype list is different from the parent, then it
+         --  has been constrained.
+         --  We cannot simply check index constraint list, as some subtypes
+         --  are created implicitely (eg: slices).
+         exit when (Get_Index_Subtype_List (Ptype)
+                      /= Get_Index_Subtype_List (T));
+         Ptype := T;
+      end loop;
+
+      --  If ATYPE is a parent type of PARENT_TYPE, then all the constrained
+      --  are inherited and there is nothing to check.
+      T := Atype;
+      loop
+         if T = Ptype then
             return True;
          end if;
-         exit when (Get_Kind (Ptype)
+         exit when (Get_Kind (T)
                     not in Iir_Kinds_Composite_Subtype_Definition);
-         Ptype := Get_Parent_Type (Ptype);
+         T := Get_Parent_Type (T);
       end loop;
       return False;
    end Is_A_Derived_Type;
@@ -1289,8 +1330,7 @@ package body Trans.Chap7 is
                                      Expr_Type : Iir;
                                      Atype     : Iir;
                                      Is_Sig    : Object_Kind_Type;
-                                     Loc       : Iir)
-                                    return O_Enode is
+                                     Loc       : Iir) return O_Enode is
    begin
       --  Same type: nothing to do.
       if Atype = Expr_Type then
@@ -1533,18 +1573,16 @@ package body Trans.Chap7 is
       Static_Length : Int64 := 0;
       Nbr_Dyn_Expr : Natural := 0;
 
-      type Handle_Acc is access procedure (E : Iir; Is_First : Boolean);
-      type Handlers_Type is record
-         Handle_El : Handle_Acc;
-         Handle_Arr : Handle_Acc;
-      end record;
-
       --  Call handlers for each leaf of LEFT CONCAT_IMP RIGHT.
       --  Handlers.Handle_Arr is called for array leaves, and
       --  Handlers.Handle_El for element leaves.
-      procedure Walk (Handlers : Handlers_Type)
+      generic
+         with procedure Handle_El (E : Iir; Is_First : Boolean);
+         with procedure Handle_Arr (E : Iir; Is_First : Boolean);
+      procedure Walk;
+
+      procedure Walk
       is
-         Walk_Handlers : Handlers_Type;
          Is_First : Boolean;
 
          --  Call handlers for each leaf of L IMP R.
@@ -1583,7 +1621,7 @@ package body Trans.Chap7 is
                end if;
             end if;
 
-            Walk_Handlers.Handle_Arr (E, Is_First);
+            Handle_Arr (E, Is_First);
             Is_First := False;
          end Walk_Arr;
 
@@ -1595,21 +1633,20 @@ package body Trans.Chap7 is
                   Walk_Arr (R);
                when Iir_Predefined_Array_Element_Concat =>
                   Walk_Arr (L);
-                  Walk_Handlers.Handle_El (R, False);
+                  Handle_El (R, False);
                when Iir_Predefined_Element_Array_Concat =>
-                  Walk_Handlers.Handle_El (L, Is_First);
+                  Handle_El (L, Is_First);
                   Is_First := False;
                   Walk_Arr (R);
                when Iir_Predefined_Element_Element_Concat =>
-                  Walk_Handlers.Handle_El (L, Is_First);
+                  Handle_El (L, Is_First);
                   Is_First := False;
-                  Walk_Handlers.Handle_El (R, False);
+                  Handle_El (R, False);
                when others =>
                   raise Internal_Error;
             end case;
          end Walk_Concat;
       begin
-         Walk_Handlers := Handlers;
          Is_First := True;
          Walk_Concat (Concat_Imp, Left, Right);
       end Walk;
@@ -1656,11 +1693,14 @@ package body Trans.Chap7 is
          end if;
       end Pre_Walk_Arr;
 
+      procedure Walk_Pre_Walk is new Walk
+        (Handle_El => Pre_Walk_El, Handle_Arr => Pre_Walk_Arr);
+
       --  In order to declare Dyn_Mnodes (below), create a function that can
       --  be called now (not possible with procedures).
       function Call_Pre_Walk return Natural is
       begin
-         Walk ((Pre_Walk_El'Access, Pre_Walk_Arr'Access));
+         Walk_Pre_Walk;
          return Nbr_Dyn_Expr;
       end Call_Pre_Walk;
 
@@ -1686,11 +1726,6 @@ package body Trans.Chap7 is
       Dyn_Mnodes : Mnode_Array;
       Dyn_I : Natural;
       E_Length : O_Enode;
-
-      procedure Nil_El (E : Iir; Is_First : Boolean) is
-      begin
-         null;
-      end Nil_El;
 
       procedure Eval_One (E : Iir; Res_Type : Iir; Copy_El_Layout : Boolean)
       is
@@ -1879,12 +1914,13 @@ package body Trans.Chap7 is
       Last_Expr : Iir;
       Last_Dyn_Expr : Natural;
 
-      procedure Find_Last_Arr (E : Iir; Is_First : Boolean)
-      is
-         pragma Unreferenced (Is_First);
+      procedure Find_Last_Arr (E : Iir; Is_First : Boolean) is
       begin
          Last_Expr := E;
          if Is_Static_Arr (E) then
+            if Is_First and Is_Unbounded_El then
+               Dyn_I := Dyn_I + 1;
+            end if;
             Last_Dyn_Expr := 0;
          else
             Dyn_I := Dyn_I + 1;
@@ -1965,6 +2001,21 @@ package body Trans.Chap7 is
          end if;
       end Assign_Bounds_Arr_V87;
 
+      procedure Walk_Eval is new Walk
+        (Handle_El => Eval_First_El, Handle_Arr => Eval_Dyn_Arr);
+
+      procedure Walk_Len_Dyn is new Walk
+        (Handle_El => Len_El, Handle_Arr => Len_Dyn_Arr);
+
+      procedure Walk_Assign_Bounds_V87 is new Walk
+        (Handle_El => Assign_Bounds_El_V87,
+         Handle_Arr => Assign_Bounds_Arr_V87);
+
+      procedure Walk_Find_Last is new Walk
+        (Handle_El => Len_El, Handle_Arr => Find_Last_Arr);
+
+      procedure Walk_Assign is new Walk
+        (Handle_El => Assign_El, Handle_Arr => Assign_Arr);
    begin
       --  Bounds
       Var_Bounds := Dv2M
@@ -1987,7 +2038,7 @@ package body Trans.Chap7 is
 
       --  Evaluate all dynamic expressions
       Dyn_I := 0;
-      Walk ((Eval_First_El'Access, Eval_Dyn_Arr'Access));
+      Walk_Eval;
       --  Check that all dynamic expressions have been handled.
       pragma Assert (Dyn_I = Dyn_Mnodes'Last);
 
@@ -1998,7 +2049,7 @@ package body Trans.Chap7 is
          E_Length := O_Enode_Null;
       end if;
       Dyn_I := 0;
-      Walk ((Len_El'Access, Len_Dyn_Arr'Access));
+      Walk_Len_Dyn;
       pragma Assert (Dyn_I = Dyn_Mnodes'Last);
       pragma Assert (E_Length /= O_Enode_Null);
       Var_Length := Create_Temp_Init (Ghdl_Index_Type, E_Length);
@@ -2041,7 +2092,7 @@ package body Trans.Chap7 is
             --  non-null range.
             Dyn_I := 0;
             Assign_Bounds_V87_Done := False;
-            Walk ((Assign_Bounds_El_V87'Access, Assign_Bounds_Arr_V87'Access));
+            Walk_Assign_Bounds_V87;
             for I in reverse 1 .. Dyn_I  loop
                Finish_If_Stmt (Assign_Bounds_Ifs (I));
             end loop;
@@ -2110,7 +2161,7 @@ package body Trans.Chap7 is
             Last_Expr := Null_Iir;
             Last_Dyn_Expr := 0;
             Dyn_I := 0;
-            Walk ((Nil_El'Access, Find_Last_Arr'Access));
+            Walk_Find_Last;
             pragma Assert (Dyn_I = Dyn_Mnodes'Last);
 
             if Last_Dyn_Expr = 0 then
@@ -2142,7 +2193,7 @@ package body Trans.Chap7 is
       Open_Temp;
       Var_Off := Create_Temp_Init (Ghdl_Index_Type, New_Lit (Ghdl_Index_0));
       Dyn_I := 0;
-      Walk ((Assign_El'Access, Assign_Arr'Access));
+      Walk_Assign;
       pragma Assert (Dyn_I = Dyn_Mnodes'Last);
       Close_Temp;
 
@@ -2529,7 +2580,6 @@ package body Trans.Chap7 is
         Get_Ortho_Type (Res_Type, Mode_Value);
       L_Type         : constant Iir := Get_Type (Left);
       R_Type         : constant Iir := Get_Type (Right);
-      L_Expr, R_Expr : O_Enode;
       L, R           : Mnode;
       Assoc          : O_Assoc_List;
 
@@ -2541,11 +2591,11 @@ package body Trans.Chap7 is
       --  Translate the arrays.  Note that Translate_Expression may create
       --  the info for the array type, so be sure to call it before calling
       --  Get_Info.
-      L_Expr := Translate_Expression (Left);
-      L := Stabilize (E2M (L_Expr, Get_Info (L_Type), Mode_Value));
+      L := Translate_Expression (Left);
+      Stabilize (L);
 
-      R_Expr := Translate_Expression (Right);
-      R := Stabilize (E2M (R_Expr, Get_Info (R_Type), Mode_Value));
+      R := Translate_Expression (Right);
+      Stabilize (R);
 
       Start_Association (Assoc, Subprg);
       New_Association
@@ -3401,6 +3451,7 @@ package body Trans.Chap7 is
       Index_List : Iir_Flist;
       Aggr_El_Type  : Iir;
       Final      : Boolean;
+      Is_Flat    : Boolean;
 
       --  Assign EXPR to current position (defined by index VAR_INDEX), and
       --  update VAR_INDEX.  Handles sub-aggregates.
@@ -3526,7 +3577,13 @@ package body Trans.Chap7 is
             Range_Ptr := Chap3.Bounds_To_Range
               (Chap3.Get_Composite_Bounds (Targ), Aggr_Type, Dim);
             Len_Tmp := M2E (Chap3.Range_To_Length (Range_Ptr));
-            if P /= 0 then
+            if Is_Flat then
+               --  Used in presence of a vector whose length is not locally
+               --  static.  In that case the aggregate is known to have only
+               --  one dimension.
+               Len_Tmp := New_Dyadic_Op
+                 (ON_Sub_Ov, Len_Tmp, New_Obj_Value (Var_Index));
+            elsif P /= 0 then
                Len_Tmp := New_Dyadic_Op
                  (ON_Sub_Ov,
                   Len_Tmp, New_Lit (New_Index_Lit (Unsigned_64 (P))));
@@ -3713,8 +3770,10 @@ package body Trans.Chap7 is
       if Get_Nbr_Elements (Index_List) = Dim then
          Aggr_El_Type := Get_Element_Subtype (Aggr_Type);
          Final:= True;
+         Is_Flat := Dim = 1;
       else
          Final := False;
+         Is_Flat := False;
       end if;
 
       Assocs := Get_Association_Choices_Chain (Aggr);
@@ -3775,7 +3834,7 @@ package body Trans.Chap7 is
       Assoc := Get_Association_Choices_Chain (Aggr);
       while Assoc /= Null_Iir loop
          --  Get the associated expression, possibly from the first choice
-         --  in a lidt of choices.
+         --  in a list of choices.
          N_El_Expr := Get_Associated_Expr (Assoc);
          if N_El_Expr /= Null_Iir then
             El_Expr := N_El_Expr;
@@ -4079,6 +4138,9 @@ package body Trans.Chap7 is
             if Get_Type_Staticness (Range_Type) = Locally then
                goto Next;
             end if;
+            if Get_Info (Expr_Type) = null then
+               Chap3.Create_Composite_Subtype (Expr_Type, True);
+            end if;
             Bnd := Chap3.Get_Composite_Type_Bounds (Expr_Type);
          else
             --  Eval expr
@@ -4358,6 +4420,15 @@ package body Trans.Chap7 is
       end case;
    end Translate_Aggregate_Bounds;
 
+   function Gen_Heap_Alloc (Size : O_Enode; Ptype : O_Tnode) return O_Enode
+   is
+      Constr : O_Assoc_List;
+   begin
+      Start_Association (Constr, Ghdl_Allocate);
+      New_Association (Constr, Size);
+      return New_Convert_Ov (New_Function_Call (Constr), Ptype);
+   end Gen_Heap_Alloc;
+
    function Translate_Allocator_By_Expression (Expr : Iir) return O_Enode
    is
       --  TODO: the constraint from an access subtype is ignored.
@@ -4396,12 +4467,11 @@ package body Trans.Chap7 is
                --  Allocate the object.
                New_Assign_Stmt
                  (New_Obj (Res),
-                  Gen_Alloc (Alloc_Heap,
-                             New_Dyadic_Op
-                               (ON_Add_Ov,
-                                New_Lit (Bounds_Size),
-                                New_Obj_Value (Val_Size)),
-                             A_Info.Ortho_Type (Mode_Value)));
+                  Gen_Heap_Alloc (New_Dyadic_Op
+                                    (ON_Add_Ov,
+                                     New_Lit (Bounds_Size),
+                                     New_Obj_Value (Val_Size)),
+                                  A_Info.Ortho_Type (Mode_Value)));
 
                --  Copy bounds.
                Gen_Memcpy
@@ -4420,8 +4490,11 @@ package body Trans.Chap7 is
          when Type_Mode_Acc =>
             R := Dp2M (Create_Temp (D_Info.Ortho_Ptr_Type (Mode_Value)),
                        D_Info, Mode_Value);
-            Chap3.Translate_Object_Allocation
-              (R, Alloc_Heap, D_Type, Mnode_Null);
+            New_Assign_Stmt
+              (M2Lp (R),
+               Gen_Heap_Alloc
+                 (Chap3.Get_Object_Size (T2M (D_Type, Mode_Value), D_Type),
+                  D_Info.Ortho_Ptr_Type (Mode_Value)));
             Chap3.Translate_Object_Copy
               (R, E2M (Val, D_Info, Mode_Value), D_Type);
             return New_Convert_Ov (M2Addr (R), A_Info.Ortho_Type (Mode_Value));
@@ -4456,7 +4529,6 @@ package body Trans.Chap7 is
       A_Info   : constant Type_Info_Acc := Get_Info (A_Type);
       D_Type   : constant Iir := Get_Designated_Type (A_Type);
       D_Info   : constant Type_Info_Acc := Get_Info (D_Type);
-      Bounds   : Mnode;
       Res      : Mnode;
    begin
       case A_Info.Type_Mode is
@@ -4487,12 +4559,11 @@ package body Trans.Chap7 is
                --  Allocate the object.
                New_Assign_Stmt
                  (New_Obj (Ptr),
-                  Gen_Alloc (Alloc_Heap,
-                             New_Dyadic_Op
-                               (ON_Add_Ov,
-                                New_Lit (Bounds_Size),
-                                New_Obj_Value (Val_Size)),
-                             A_Info.Ortho_Type (Mode_Value)));
+                  Gen_Heap_Alloc (New_Dyadic_Op
+                                    (ON_Add_Ov,
+                                     New_Lit (Bounds_Size),
+                                     New_Obj_Value (Val_Size)),
+                                  A_Info.Ortho_Type (Mode_Value)));
 
                --  Copy bounds.
                Gen_Memcpy (New_Obj_Value (Ptr),
@@ -4508,9 +4579,11 @@ package body Trans.Chap7 is
          when Type_Mode_Acc =>
             Res := Dp2M (Create_Temp (D_Info.Ortho_Ptr_Type (Mode_Value)),
                          D_Info, Mode_Value);
-            Bounds := Mnode_Null;
-            Chap3.Translate_Object_Allocation
-              (Res, Alloc_Heap, D_Type, Bounds);
+            New_Assign_Stmt
+              (M2Lp (Res),
+               Gen_Heap_Alloc
+                 (Chap3.Get_Object_Size (T2M (D_Type, Mode_Value), D_Type),
+                  D_Info.Ortho_Ptr_Type (Mode_Value)));
             Chap4.Init_Object (Res, D_Type);
             return New_Convert_Ov
               (M2Addr (Res), A_Info.Ortho_Type (Mode_Value));
@@ -4602,7 +4675,7 @@ package body Trans.Chap7 is
             --  1. Copy layout size
             for K in Object_Kind_Type loop
                New_Assign_Stmt (Chap3.Layout_To_Size (Res_El, K),
-                                New_Value (Chap3.Layout_To_Size (Res_El, K)));
+                                New_Value (Chap3.Layout_To_Size (Src_El, K)));
             end loop;
 
             --  2. Recurse on bounds
@@ -5025,6 +5098,7 @@ package body Trans.Chap7 is
             | Iir_Kind_Interface_Constant_Declaration
             | Iir_Kind_Interface_Variable_Declaration
             | Iir_Kind_Interface_Signal_Declaration
+            | Iir_Kind_Interface_View_Declaration
             | Iir_Kind_Interface_File_Declaration
             | Iir_Kind_Indexed_Name
             | Iir_Kind_Slice_Name
@@ -5037,7 +5111,8 @@ package body Trans.Chap7 is
             | Iir_Kind_Transaction_Attribute
             | Iir_Kind_Guard_Signal_Declaration
             | Iir_Kind_Attribute_Value
-            | Iir_Kind_Attribute_Name =>
+            | Iir_Kind_Attribute_Name
+            | Iir_Kinds_External_Name =>
             Res := M2E (Chap6.Translate_Name (Expr, Mode_Value));
 
          when Iir_Kind_Iterator_Declaration =>
@@ -5418,7 +5493,7 @@ package body Trans.Chap7 is
          when Iir_Kind_Range_Expression =>
             Translate_Range_Expression (Res, Arange, Range_Type);
          when others =>
-            Error_Kind ("translate_range_ptr", Arange);
+            Error_Kind ("translate_range", Arange);
       end case;
    end Translate_Range;
 

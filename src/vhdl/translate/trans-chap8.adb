@@ -22,6 +22,7 @@ with Vhdl.Canon;
 with Vhdl.Evaluation; use Vhdl.Evaluation;
 with Vhdl.Std_Package; use Vhdl.Std_Package;
 with Vhdl.Utils; use Vhdl.Utils;
+with Vhdl.Ieee.Std_Logic_1164;
 with Trans.Chap2;
 with Trans.Chap3;
 with Trans.Chap4;
@@ -29,6 +30,7 @@ with Trans.Chap6;
 with Trans.Chap7;
 with Trans.Chap9;
 with Trans.Chap14;
+with Trans.Coverage;
 with Trans_Decls; use Trans_Decls;
 with Translation; use Translation;
 with Trans.Helpers2; use Trans.Helpers2;
@@ -191,6 +193,8 @@ package body Trans.Chap8 is
          end if;
       end Gen_Return_Value;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       if Expr = Null_Iir then
          --  Return in a procedure.
          if Get_Suspend_Flag (Chap2.Current_Subprogram) then
@@ -392,6 +396,8 @@ package body Trans.Chap8 is
 
    procedure Translate_If_Statement (Stmt : Iir) is
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       if Get_Suspend_Flag (Stmt) then
          Translate_If_Statement_State (Stmt);
       else
@@ -765,6 +771,8 @@ package body Trans.Chap8 is
    is
       Prev_Loop      : Iir;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Prev_Loop := Current_Loop;
       Current_Loop := Stmt;
 
@@ -782,6 +790,8 @@ package body Trans.Chap8 is
       Cond : constant Iir := Get_Condition (Stmt);
       Prev_Loop : Iir;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Prev_Loop := Current_Loop;
       Current_Loop := Stmt;
 
@@ -860,6 +870,8 @@ package body Trans.Chap8 is
       Loop_Label : Iir;
       Loop_Stmt  : Iir;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Loop_Label := Get_Loop_Label (Stmt);
       if Loop_Label = Null_Iir then
          Loop_Stmt := Current_Loop;
@@ -1166,6 +1178,8 @@ package body Trans.Chap8 is
       Expr      : constant Iir := Get_Expression (Stmt);
       Targ_Node : Mnode;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       if Get_Kind (Target) = Iir_Kind_Aggregate then
          declare
             E    : Mnode;
@@ -1302,6 +1316,8 @@ package body Trans.Chap8 is
       If_Blk : O_If_Block;
       Subprg : O_Dnode;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       --  Select the procedure to call in case of assertion (so that
       --  assertions within the IEEE library could be ignored).
       if Is_Within_Ieee_Library then
@@ -1336,31 +1352,65 @@ package body Trans.Chap8 is
 
    procedure Translate_Report_Statement (Stmt : Iir_Report_Statement) is
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Translate_Report (Stmt, Ghdl_Report, Severity_Level_Note);
    end Translate_Report_Statement;
 
    --  Helper to compare a string choice with the selector.
-   function Translate_Simple_String_Choice
-     (Expr     : O_Dnode;
-      Val      : O_Enode;
-      Val_Node : O_Dnode;
-      Tinfo    : Type_Info_Acc;
-      Func     : Iir)
-     return O_Enode
+   function Translate_Simple_String_Choice (Expr : Mnode;
+                                            Val  : Mnode;
+                                            Func : Iir) return O_Enode
    is
       Assoc     : O_Assoc_List;
-      Func_Info : Operator_Info_Acc;
    begin
-      New_Assign_Stmt (New_Selected_Element (New_Obj (Val_Node),
-                                             Tinfo.B.Base_Field (Mode_Value)),
-                       New_Convert (Val, Tinfo.B.Base_Ptr_Type (Mode_Value)));
-      Func_Info := Get_Info (Func);
-      Start_Association (Assoc, Func_Info.Operator_Node);
-      Subprgs.Add_Subprg_Instance_Assoc (Assoc, Func_Info.Operator_Instance);
-      New_Association (Assoc, New_Obj_Value (Expr));
-      New_Association (Assoc, New_Address (New_Obj (Val_Node),
-                                           Tinfo.Ortho_Ptr_Type (Mode_Value)));
-      return New_Function_Call (Assoc);
+      case Get_Implicit_Definition (Func) is
+         when Iir_Predefined_Std_Ulogic_Array_Match_Equality =>
+            declare
+               Inter : constant Iir := Get_Interface_Declaration_Chain (Func);
+               Arr_Type : constant Iir := Get_Type (Inter);
+               Sval : Mnode;
+               Res : O_Enode;
+            begin
+               Sval := Stabilize (Val);
+               Start_Association (Assoc, Ghdl_Std_Ulogic_Array_Match_Eq);
+               New_Association
+                 (Assoc,
+                  New_Convert_Ov (M2E (Chap3.Get_Composite_Base (Expr)),
+                                  Ghdl_Ptr_Type));
+               New_Association
+                 (Assoc,
+                  M2E (Chap3.Range_To_Length
+                         (Chap3.Get_Array_Range (Expr, Arr_Type, 1))));
+               New_Association
+                 (Assoc,
+                  New_Convert_Ov (M2E (Chap3.Get_Composite_Base (Sval)),
+                                  Ghdl_Ptr_Type));
+               New_Association
+                 (Assoc,
+                  M2E (Chap3.Range_To_Length
+                         (Chap3.Get_Array_Range (Sval, Arr_Type, 1))));
+               Res := New_Function_Call (Assoc);
+               return New_Compare_Op
+                 (ON_Eq,
+                  Res,
+                  New_Lit (New_Signed_Literal
+                             (Ghdl_I32_Type,
+                              Vhdl.Ieee.Std_Logic_1164.Std_Logic_1_Pos)),
+                  Std_Boolean_Type_Node);
+            end;
+         when others =>
+            declare
+               Func_Info : constant Operator_Info_Acc := Get_Info (Func);
+            begin
+               Start_Association (Assoc, Func_Info.Operator_Node);
+               Subprgs.Add_Subprg_Instance_Assoc
+                 (Assoc, Func_Info.Operator_Instance);
+               New_Association (Assoc, M2E (Expr));
+               New_Association (Assoc, M2E (Val));
+               return New_Function_Call (Assoc);
+            end;
+      end case;
    end Translate_Simple_String_Choice;
 
    --  Helper to evaluate the selector and preparing a choice variable.
@@ -1372,8 +1422,8 @@ package body Trans.Chap8 is
       Choices    : Iir;
       Len_Type   : out Iir;
       Base_Type  : out Iir;
-      Expr_Node  : out O_Dnode;
-      C_Node     : out O_Dnode)
+      Expr_Node  : out Mnode;
+      C_Node     : out Mnode)
    is
       Expr       : constant Iir := Get_Expression (Stmt);
       Expr_Type  : Iir;
@@ -1390,17 +1440,13 @@ package body Trans.Chap8 is
       Len_Type := Expr_Type;
 
       --  Translate selector.
-      Expr_Node := Create_Temp_Init
-        (Tinfo.Ortho_Ptr_Type (Mode_Value),
-         Chap7.Translate_Expression (Expr, Base_Type));
+      Expr_Node := Chap7.Translate_Expression (Expr, Base_Type);
+      Stabilize (Expr_Node);
 
       --  Copy the bounds for the choices.
-      C_Node := Create_Temp (Tinfo.Ortho_Type (Mode_Value));
-      New_Assign_Stmt
-        (New_Selected_Element (New_Obj (C_Node),
-         Tinfo.B.Bounds_Field (Mode_Value)),
-         New_Value_Selected_Acc_Value
-           (New_Obj (Expr_Node), Tinfo.B.Bounds_Field (Mode_Value)));
+      C_Node := Create_Temp (Tinfo, Mode_Value);
+      New_Assign_Stmt (M2Lp (Chap3.Get_Composite_Bounds (C_Node)),
+                       M2Addr (Chap3.Get_Composite_Bounds (Expr_Node)));
 
       --  LRM08 10.9 Case statement
       --  In all cases, it is an error if the value of the expression is not of
@@ -1414,9 +1460,7 @@ package body Trans.Chap8 is
            (Get_String_Type_Bound_Type (Len_Type));
          Cond := New_Compare_Op
            (ON_Neq,
-            Chap3.Get_Array_Length
-              (Dp2M (Expr_Node, Get_Info (Expr_Type), Mode_Value),
-               Expr_Type),
+            Chap3.Get_Array_Length (Expr_Node, Expr_Type),
             New_Lit (New_Index_Lit (Unsigned_64 (Sel_Length))),
             Ghdl_Bool_Type);
          Chap6.Check_Bound_Error (Cond, Expr);
@@ -1454,8 +1498,8 @@ package body Trans.Chap8 is
 
       --  Selector.
       Tinfo     : Type_Info_Acc;
-      Expr_Node : O_Dnode;
-      C_Node    : O_Dnode;
+      Expr_Node : Mnode;
+      C_Node    : Mnode;
       Var_Idx   : O_Dnode;
       Others_Lit : O_Cnode;
 
@@ -1681,14 +1725,16 @@ package body Trans.Chap8 is
                                           New_Obj_Value (Var_Hi)),
                            New_Lit (New_Unsigned_Literal
                                       (Ghdl_Index_Type, 2))));
+
+         New_Assign_Stmt
+           (M2Lp (Chap3.Get_Composite_Base (C_Node)),
+            New_Address (New_Indexed_Element (New_Obj (Table),
+                                              New_Obj_Value (Var_Mid)),
+                         Tinfo.B.Base_Ptr_Type (Mode_Value)));
+
          New_Assign_Stmt
            (New_Obj (Var_Cmp),
-            Translate_Simple_String_Choice
-              (Expr_Node,
-               New_Address (New_Indexed_Element (New_Obj (Table),
-                                                 New_Obj_Value (Var_Mid)),
-                            Tinfo.B.Base_Ptr_Type (Mode_Value)),
-               C_Node, Tinfo, Func));
+            Translate_Simple_String_Choice (Expr_Node, C_Node, Func));
 
          --  Generate:
          --       if Cmp = Eq then
@@ -1836,15 +1882,16 @@ package body Trans.Chap8 is
    is
       Len_Type  : Iir;
       --  Node containing the address of the selector.
-      Expr_Node : O_Dnode;
+      Expr_Node : Mnode;
       --  Node containing the current choice.
-      Val_Node  : O_Dnode;
+      Val_Node  : Mnode;
       Base_Type : Iir;
-      Tinfo     : Type_Info_Acc;
 
       Cond_Var : O_Dnode;
 
+      Func_Def : Iir_Predefined_Functions;
       Func : Iir;
+
 
       procedure Translate_String_Choice (Choice : Iir)
       is
@@ -1868,9 +1915,9 @@ package body Trans.Chap8 is
                   Ch_Expr := Get_Choice_Expression (Ch);
                   Cond := Translate_Simple_String_Choice
                     (Expr_Node,
-                     Chap7.Translate_Expression (Ch_Expr,
-                                                 Get_Type (Ch_Expr)),
-                     Val_Node, Tinfo, Func);
+                     Chap7.Translate_Expression
+                       (Ch_Expr, Get_Base_Type (Get_Type (Ch_Expr))),
+                     Func);
                when Iir_Kind_Choice_By_Others =>
                   Case_Association_Cb (Stmt_Chain, Handler);
                   return;
@@ -1904,10 +1951,14 @@ package body Trans.Chap8 is
       Open_Temp;
       Translate_String_Case_Statement_Common
         (Stmt, Choices, Len_Type, Base_Type, Expr_Node, Val_Node);
-      Tinfo := Get_Info (Base_Type);
 
+      if Get_Matching_Flag (Stmt) then
+         Func_Def := Iir_Predefined_Std_Ulogic_Array_Match_Equality;
+      else
+         Func_Def := Iir_Predefined_Array_Equality;
+      end if;
       Func := Chap7.Find_Predefined_Function
-        (Get_Base_Type (Len_Type), Iir_Predefined_Array_Equality);
+        (Get_Base_Type (Len_Type), Func_Def);
 
       Cond_Var := Create_Temp (Std_Boolean_Type_Node);
 
@@ -1944,20 +1995,20 @@ package body Trans.Chap8 is
       end case;
    end Translate_Case_Choice;
 
-   procedure Translate_Case (N : Iir; Handler : in out Case_Handler'Class)
+   procedure Translate_Case (Stmt : Iir; Handler : in out Case_Handler'Class)
    is
-      Expr : constant Iir := Get_Expression (N);
+      Expr : constant Iir := Get_Expression (Stmt);
       Expr_Type : constant Iir := Get_Type (Expr);
       Choices : Iir;
    begin
       --  Get the chain of choices.
-      case Get_Kind (N) is
+      case Get_Kind (Stmt) is
          when Iir_Kind_Case_Statement =>
-            Choices := Get_Case_Statement_Alternative_Chain (N);
+            Choices := Get_Case_Statement_Alternative_Chain (Stmt);
          when Iir_Kind_Selected_Waveform_Assignment_Statement =>
-            Choices := Get_Selected_Waveform_Chain (N);
+            Choices := Get_Selected_Waveform_Chain (Stmt);
          when others =>
-            Error_Kind ("translate_case", N);
+            Error_Kind ("translate_case", Stmt);
       end case;
 
       if Get_Kind (Expr_Type) in Iir_Kinds_Array_Type_Definition then
@@ -1982,8 +2033,8 @@ package body Trans.Chap8 is
             end loop;
 
             --  Select the strategy according to the number of choices.
-            if Nbr_Choices < 3 then
-               Translate_String_Case_Statement_Linear (N, Choices, Handler);
+            if Get_Matching_Flag (Stmt) or else Nbr_Choices < 3 then
+               Translate_String_Case_Statement_Linear (Stmt, Choices, Handler);
             elsif Nbr_Choices <= 512 then
                --  Can allocate on the stack.
                declare
@@ -1992,7 +2043,7 @@ package body Trans.Chap8 is
                   Choices_Info : Choice_Info_Arr (Valid_Choice_Id);
                begin
                   Translate_String_Case_Statement_Dichotomy
-                    (N, Choices, Nbr_Choices, Choices_Info, Handler);
+                    (Stmt, Choices, Nbr_Choices, Choices_Info, Handler);
                end;
             else
                --  Allocate on the heap.
@@ -2006,7 +2057,7 @@ package body Trans.Chap8 is
                begin
                   Choices_Info := new Choice_Info_Arr (Valid_Choice_Id);
                   Translate_String_Case_Statement_Dichotomy
-                    (N, Choices, Nbr_Choices, Choices_Info.all, Handler);
+                    (Stmt, Choices, Nbr_Choices, Choices_Info.all, Handler);
                   Free (Choices_Info);
                end;
             end if;
@@ -2066,6 +2117,8 @@ package body Trans.Chap8 is
    is
       Handler : Case_Statement_Handler;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       --  Initialize handler.
       Handler.Has_Suspend := Get_Suspend_Flag (Stmt);
       if Handler.Has_Suspend then
@@ -2472,31 +2525,56 @@ package body Trans.Chap8 is
                Kind : Iir_Kind;
             begin
                if Is_Fully_Constrained_Type (Ftype) then
+                  --  No bounds as the parameter is not a fat pointer.
                   return False;
                end if;
-               if Act_Type /= Null_Iir
-                 and then Get_Type_Staticness (Act_Type) = Locally
+               if Act_Type /= Null_Iir then
+                  if not Chap7.Is_A_Derived_Type (Act_Type, Ftype) then
+                     --  But if an implicit subtype conversion is needed,
+                     --  the bounds need to be saved.
+                     return True;
+                  end if;
+                  if Get_Type_Staticness (Act_Type) = Locally then
+                     --  Actual bounds are statically built.
+                     return False;
+                  end if;
+               end if;
+
+               if Actual = Null_Iir then
+                  --  No actual, and default value is not locally static.
+                  return True;
+               end if;
+
+               if Get_Expr_Staticness (Actual) = Locally
+                 and then Kind_In (Actual,
+                                   Iir_Kind_Simple_Aggregate,
+                                   Iir_Kind_Aggregate)
                then
+                  --  Actual is static (so are its bounds).
                   return False;
                end if;
-               if Actual /= Null_Iir then
-                  if Get_Expr_Staticness (Actual) = Locally then
-                     return False;
-                  end if;
-                  Kind := Get_Kind (Actual);
-                  if (Kind = Iir_Kind_Function_Call
-                        or else Kind in Iir_Kinds_Dyadic_Operator
-                        or else Kind in Iir_Kinds_Monadic_Operator)
-                    and then Is_Fully_Constrained_Type (Get_Type (Actual))
-                  then
-                     return False;
-                  end if;
-                  if Is_Object_Name (Actual)
-                    and then Kind /= Iir_Kind_Slice_Name
-                  then
-                     return False;
-                  end if;
+
+               Kind := Get_Kind (Actual);
+               if (Kind = Iir_Kind_Function_Call
+                     or else Kind in Iir_Kinds_Dyadic_Operator
+                     or else Kind in Iir_Kinds_Monadic_Operator)
+                 and then Is_Fully_Constrained_Type (Get_Type (Actual))
+               then
+                  --  Actual is the result of an unconstrained function call.
+                  --  The result bounds are already allocated on stack2.
+                  return False;
                end if;
+
+               if Is_Object_Name (Actual) then
+                  --  The life of an object name is longer than the life
+                  --  of a call.
+                  if Kind = Iir_Kind_Slice_Name then
+                     --  Unless the name is a slice!
+                     return True;
+                  end if;
+                  return False;
+               end if;
+
                return True;
             end Need_Bounds_Field;
 
@@ -3771,6 +3849,8 @@ package body Trans.Chap8 is
       Resume_State : State_Type;
       Free_List_P : Boolean;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Sensitivity := Get_Sensitivity_List (Stmt);
       Free_List_P := False;
       if Sensitivity = Null_Iir_List and Cond /= Null_Iir then
@@ -4560,6 +4640,7 @@ package body Trans.Chap8 is
    function Is_Simple_Waveform (We : Iir) return Boolean is
    begin
       if We /= Null_Iir
+        and then Get_Kind (We) = Iir_Kind_Waveform_Element
         and then Get_Chain (We) = Null_Iir
         and then Get_Time (We) = Null_Iir
       then
@@ -4606,16 +4687,21 @@ package body Trans.Chap8 is
          if Target_Tinfo.Type_Mode in Type_Mode_Unbounded then
             pragma Assert (not Constrained);
             --  Unbounded array, allocate bounds.
-            pragma Assert (Target_Tinfo.S.Composite_Layout = Null_Var);
-            Target_Tinfo.S.Composite_Layout :=
-              Create_Var (Create_Uniq_Identifier, Target_Tinfo.B.Layout_Type,
-                          O_Storage_Local);
-            Layout := Lv2M (Get_Var (Target_Tinfo.S.Composite_Layout),
-                            Target_Tinfo,
-                            Mode_Value,
-                            Target_Tinfo.B.Layout_Type,
-                            Target_Tinfo.B.Layout_Ptr_Type);
-            Bounds := Stabilize (Chap3.Layout_To_Bounds (Layout));
+
+            if Get_Literal_Subtype (Target) /= Null_Iir then
+               pragma Assert (Target_Tinfo.S.Composite_Layout = Null_Var);
+               Target_Tinfo.S.Composite_Layout :=
+                 Create_Var (Create_Uniq_Identifier,
+                             Target_Tinfo.B.Layout_Type, O_Storage_Local);
+               Layout := Lv2M (Get_Var (Target_Tinfo.S.Composite_Layout),
+                               Target_Tinfo,
+                               Mode_Value,
+                               Target_Tinfo.B.Layout_Type,
+                               Target_Tinfo.B.Layout_Ptr_Type);
+               Bounds := Stabilize (Chap3.Layout_To_Bounds (Layout));
+            else
+               Bounds := Create_Temp_Bounds (Target_Tinfo);
+            end if;
             New_Assign_Stmt (M2Lp (Chap3.Get_Composite_Bounds (Targ)),
                              M2Addr (Bounds));
             --  Build bounds from aggregate.
@@ -4659,6 +4745,10 @@ package body Trans.Chap8 is
       if Wf_Chain = Null_Iir then
          --  Implicit disconnect statment.
          Register_Signal (Targ, Target_Type, Ghdl_Signal_Disconnect);
+         return;
+      end if;
+
+      if Get_Kind (Wf_Chain) = Iir_Kind_Unaffected_Waveform then
          return;
       end if;
 
@@ -4807,6 +4897,8 @@ package body Trans.Chap8 is
       Targ : Mnode;
       Drv : Mnode;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       if Is_Valid (Wf_Chain)
         and then Get_Kind (Wf_Chain) = Iir_Kind_Unaffected_Waveform
       then
@@ -4857,6 +4949,8 @@ package body Trans.Chap8 is
       Wf : Iir;
       Handler : Selected_Assignment_Handler;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Handler.Stmt := Stmt;
 
       --  Compute the mechanism used.
@@ -4902,6 +4996,8 @@ package body Trans.Chap8 is
       Targ : Mnode;
       Proc : O_Dnode;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Targ := Chap6.Translate_Name (Target, Mode_Signal);
       case Get_Force_Mode (Stmt) is
          when Iir_Force_In =>
@@ -4999,15 +5095,16 @@ package body Trans.Chap8 is
    is
       Target : constant Iir := Get_Target (Stmt);
       Target_Type : constant Iir := Get_Type (Target);
-      Targ_Tinfo : constant Type_Info_Acc := Get_Info (Target_Type);
       Expr : constant Iir := Get_Expression (Stmt);
       Value : Mnode;
       Targ  : Mnode;
    begin
+      Trans.Coverage.Cover_Statement (Stmt);
+
       Targ := Chap6.Translate_Name (Target, Mode_Signal);
       Value := Chap7.Translate_Expression (Expr, Target_Type);
 
-      if Is_Composite (Targ_Tinfo)
+      if (Is_Array_Type (Target_Type) or else Is_Record_Type (Target_Type))
         and then Get_Constraint_State (Target_Type) /= Fully_Constrained
       then
          Stabilize (Targ);
@@ -5020,7 +5117,7 @@ package body Trans.Chap8 is
       Gen_Signal_Force (Targ, Target_Type, M2E (Value));
    end Translate_Signal_Force_Assignment_Statement;
 
-   --  Free the statement createed by Canon for a conditional assignment.
+   --  Free the statement created by Canon for a conditional assignment.
    procedure Free_Canon_Conditional_Statement (Stmt : Iir)
    is
       S : Iir;
@@ -5036,6 +5133,26 @@ package body Trans.Chap8 is
          S := Els;
       end loop;
    end Free_Canon_Conditional_Statement;
+
+   --  Free the statement created by Canon for a selected assignment.
+   procedure Free_Canon_Selected_Statement (Stmt : Iir)
+   is
+      S : Iir;
+      Choice : Iir;
+   begin
+      Choice := Get_Case_Statement_Alternative_Chain (Stmt);
+      while Choice /= Null_Iir loop
+         if not Get_Same_Alternative_Flag (Choice) then
+            S := Get_Associated_Chain (Choice);
+            Set_Associated_Chain (Choice, Null_Iir);
+            Set_Associated_Expr (Choice, Get_Expression (S));
+            Free_Iir (S);
+         end if;
+         Choice := Get_Chain (Choice);
+      end loop;
+      S := Stmt;
+      Free_Iir (S);
+   end Free_Canon_Selected_Statement;
 
    procedure Translate_Statement (Stmt : Iir) is
    begin
@@ -5082,6 +5199,17 @@ package body Trans.Chap8 is
                Translate_If_Statement (C_Stmt);
                Free_Canon_Conditional_Statement (C_Stmt);
             end;
+         when Iir_Kind_Selected_Variable_Assignment_Statement =>
+            declare
+               use Vhdl.Canon;
+               C_Stmt : Iir;
+            begin
+               C_Stmt :=
+                 Canon_Selected_Variable_Assignment_Statement (Stmt);
+               Trans.Update_Node_Infos;
+               Translate_Case_Statement (C_Stmt);
+               Free_Canon_Selected_Statement (C_Stmt);
+            end;
          when Iir_Kind_Conditional_Signal_Assignment_Statement =>
             declare
                use Vhdl.Canon;
@@ -5109,6 +5237,8 @@ package body Trans.Chap8 is
                Call : constant Iir := Get_Procedure_Call (Stmt);
                Imp  : constant Iir := Get_Implementation (Call);
             begin
+               Trans.Coverage.Cover_Statement (Stmt);
+
                if not Get_Suspend_Flag (Stmt) then
                   --  Suspendable calls were already canonicalized.
                   Vhdl.Canon.Canon_Subprogram_Call (Call);

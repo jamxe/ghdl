@@ -596,6 +596,7 @@ package body Trans.Chap3 is
    begin
       Start_Record_Aggr (List, Binfo.B.Bounds_Type);
 
+      --  Range of each index.
       for I in Flist_First .. Flist_Last (Indexes_List) loop
          Index := Get_Index_Type (Indexes_List, I);
          New_Record_Aggr_El
@@ -637,6 +638,7 @@ package body Trans.Chap3 is
          Bel := Get_Nth_Element (El_Blist, I);
          Bel_Info := Get_Info (Bel);
          if Bel_Info.Field_Bound /= O_Fnode_Null then
+            --  Offset of each unbounded fields (* 2 if can have signal)
             for Kind in Mode_Value .. Type_To_Last_Object_Kind (Base_Type)
             loop
                if Info.Ortho_Type (Kind) /= O_Tnode_Null then
@@ -753,14 +755,19 @@ package body Trans.Chap3 is
                      --  for it.
                      null;
                   elsif El_Tinfo.S.Subtype_Owner /= Tinfo then
-                     --  The element is not owned by this subtype, so it has
-                     --  its own layout variable that must have been set.
-                     --  Just copy the layout.
-                     Gen_Memcpy
-                       (M2Addr (Array_Bounds_To_Element_Layout (Targ, Def)),
-                        M2Addr (Get_Composite_Type_Layout (El_Tinfo)),
-                        New_Lit (New_Sizeof (El_Tinfo.B.Layout_Type,
-                                             Ghdl_Index_Type)));
+                     --  Do not try to copy layout if there are none.
+                     if El_Tinfo.S.Subtype_Owner /= null
+                       or else El_Tinfo.S.Composite_Layout /= Null_Var
+                     then
+                        --  The element is not owned by this subtype, so it has
+                        --  its own layout variable that must have been set.
+                        --  Just copy the layout.
+                        Gen_Memcpy
+                          (M2Addr (Array_Bounds_To_Element_Layout (Targ, Def)),
+                           M2Addr (Get_Composite_Type_Layout (El_Tinfo)),
+                           New_Lit (New_Sizeof (El_Tinfo.B.Layout_Type,
+                                                Ghdl_Index_Type)));
+                     end if;
                   else
                      --  New constraints.
                      Elab_Composite_Subtype_Layout
@@ -1336,6 +1343,9 @@ package body Trans.Chap3 is
       end loop;
 
       --  Create the bounds type
+      --  TODO: separate type bounds (for complex elements) and subtype bounds
+      --  (for unbounded elements).
+      --  TODO: only for unbounded or complex records.
       Info.B.Bounds_Type := O_Tnode_Null;
       Start_Record_Type (El_List);
       New_Record_Field (El_List, Info.B.Layout_Size,
@@ -2742,7 +2752,9 @@ package body Trans.Chap3 is
       if Get_Kind (Decl) = Iir_Kind_Constant_Declaration then
          Ind_Type := Get_Type_Of_Subtype_Indication (Ind);
          Def := Get_Type (Decl);
-         if Def /= Ind_Type then
+         if Def /= Ind_Type
+           and then Is_Anonymous_Type_Definition (Def)
+         then
             Push_Identifier_Prefix (Mark2, "OTD");
             Chap3.Translate_Subtype_Definition (Def, With_Vars);
             Pop_Identifier_Prefix (Mark2);
@@ -2773,11 +2785,38 @@ package body Trans.Chap3 is
       if Get_Kind (Decl) = Iir_Kind_Constant_Declaration then
          Ind_Type := Get_Type_Of_Subtype_Indication (Ind);
          Def := Get_Type (Decl);
-         if Def /= Ind_Type then
+         if Def /= Ind_Type
+           and then Is_Anonymous_Type_Definition (Def)
+         then
             Elab_Subtype_Definition (Def);
          end if;
       end if;
    end Elab_Object_Subtype_Indication;
+
+   procedure Translate_External_Name_Subtype_Indication (Name : Iir)
+   is
+      Ind : constant Iir := Get_Subtype_Indication (Name);
+      Ind_Type : Iir;
+      Mark2 : Id_Mark_Type;
+   begin
+      if Is_Proper_Subtype_Indication (Ind) then
+         Ind_Type := Get_Type_Of_Subtype_Indication (Ind);
+         Push_Identifier_Prefix (Mark2, "OT");
+         Chap3.Translate_Subtype_Definition (Ind_Type, True);
+         Pop_Identifier_Prefix (Mark2);
+      end if;
+   end Translate_External_Name_Subtype_Indication;
+
+   procedure Elab_External_Name_Subtype_Indication (Name : Iir)
+   is
+      Ind : constant Iir := Get_Subtype_Indication (Name);
+      Ind_Type : Iir;
+   begin
+      if Is_Proper_Subtype_Indication (Ind) then
+         Ind_Type := Get_Type_Of_Subtype_Indication (Ind);
+         Chap3.Elab_Subtype_Definition (Ind_Type);
+      end if;
+   end Elab_External_Name_Subtype_Indication;
 
    procedure Elab_Type_Declaration (Decl : Iir) is
    begin
@@ -3450,20 +3489,12 @@ package body Trans.Chap3 is
       end if;
    end Translate_Object_Allocation;
 
-   procedure Gen_Deallocate (Obj : O_Enode)
-   is
-      Assocs : O_Assoc_List;
-   begin
-      Start_Association (Assocs, Ghdl_Deallocate);
-      New_Association (Assocs, New_Convert_Ov (Obj, Ghdl_Ptr_Type));
-      New_Procedure_Call (Assocs);
-   end Gen_Deallocate;
-
    --  Performs deallocation of PARAM (the parameter of a deallocate call).
    procedure Translate_Object_Deallocation (Param : Iir)
    is
       Param_Type : constant Iir := Get_Type (Param);
       Info       : constant Type_Info_Acc := Get_Info (Param_Type);
+      Assocs : O_Assoc_List;
       Val        : Mnode;
    begin
       --  Compute parameter
@@ -3471,7 +3502,10 @@ package body Trans.Chap3 is
       Stabilize (Val);
 
       --  Call deallocator.
-      Gen_Deallocate (New_Value (M2Lv (Val)));
+      Start_Association (Assocs, Ghdl_Deallocate);
+      New_Association (Assocs, New_Convert_Ov (New_Value (M2Lv (Val)),
+                                               Ghdl_Ptr_Type));
+      New_Procedure_Call (Assocs);
 
       --  Set the value to null.
       New_Assign_Stmt
@@ -3651,12 +3685,14 @@ package body Trans.Chap3 is
    is
       L_List : constant Iir_Flist := Get_Elements_Declaration_List (L_Type);
       R_List : constant Iir_Flist := Get_Elements_Declaration_List (R_Type);
+      L_El, R_El : Iir;
       Res : Tri_State_Type;
    begin
       Res := True;
       for I in Flist_First .. Flist_Last (L_List) loop
-         case Locally_Types_Match (Get_Type (Get_Nth_Element (L_List, I)),
-                                   Get_Type (Get_Nth_Element (R_List, I))) is
+         L_El := Get_Type (Get_Nth_Element (L_List, I));
+         R_El := Get_Type (Get_Nth_Element (R_List, I));
+         case Locally_Types_Match (L_El, R_El) is
             when False =>
                return False;
             when True =>
@@ -3675,6 +3711,7 @@ package body Trans.Chap3 is
       if L_Type = R_Type then
          return True;
       end if;
+
       case Get_Kind (L_Type) is
          when Iir_Kind_Array_Subtype_Definition =>
             return Locally_Array_Match (L_Type, R_Type);
