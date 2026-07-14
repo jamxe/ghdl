@@ -572,17 +572,13 @@ class ForGenerateStatement(VHDLModel_ForGenerateStatement, DOMMixin):
         rng: Range,
         declaredItems: Iterable = None,
         statements: Iterable[ConcurrentStatement] = None,
-        parent: Nullable[ModelEntity] = None
+        parent: Nullable[ModelEntity] = None,
     ) -> None:
         super().__init__(label, loopIndex, rng, declaredItems, statements, parent=parent)
         DOMMixin.__init__(self, generateNode)
 
     @classmethod
-    def parse(
-        cls,
-        generateNode: Iir,
-        label: str
-    ) -> "ForGenerateStatement":
+    def parse(cls, generateNode: Iir, label: str) -> "ForGenerateStatement":
         from pyGHDL.dom._Utils import GetIirKindOfNode, GetNameOfNode
         from pyGHDL.dom._Translate import (
             GetDeclaredItemsFromChainedNodes,
