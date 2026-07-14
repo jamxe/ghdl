@@ -3537,7 +3537,7 @@ package body Vhdl.Evaluation is
          Index : Iir;
       begin
          for I in Flist_First .. Flist_Last (Indexes_Type) loop
-            Prefix_Index := Get_Nth_Element (Indexes_Type, I);
+            Prefix_Index := Get_Index_Type (Indexes_Type, I);
 
             --  Eval index.
             Index := Get_Nth_Element (Indexes_List, I);
