@@ -31,7 +31,8 @@ begin
                 std_logic'image (expect (i - 9)) & "was expected."); 
       end if;
     else
-      report "All tests passed." severity failure;
+      report "All tests passed." severity note;
+      wait;
     end if;
     i := i + 1;
   end process dotrans;
