@@ -461,10 +461,11 @@ package body Ortho_Debug.Disp is
       pragma Assert (IEEE_Float_64'Machine_Mantissa = 53);
       Exp : Integer;
       Man : Unsigned_64;
-      --  Res: sign(1) + 0x(2) + Man(53 / 3 ~= 18) + p(1) + sing(1) + exp(4)
+      --  Res: sign(1) + 0x(2) + Man(53 / 3 ~= 18) + p(1) + sign(1) + exp(4)
       Str : String (1 .. 1 + 2 + 18 + 1 + 1 + 4);
       P : Natural;
       Neg : Boolean;
+      Ndigits : Natural;
    begin
       Exp := IEEE_Float_64'Exponent (Val) - 1;
       Man := Unsigned_64 (abs (IEEE_Float_64'Fraction (Val)) * 2.0 ** 53);
@@ -479,8 +480,10 @@ package body Ortho_Debug.Disp is
          Man := Man and (2**52 - 1);
 
          --  Remove trailing hex 0.
+         Ndigits := 52 / 4; -- 13
          while Man /= 0 and (Man rem 16) = 0 loop
             Man := Man / 16;
+            Ndigits := Ndigits - 1;
          end loop;
 
          --  Exponent.
@@ -505,11 +508,10 @@ package body Ortho_Debug.Disp is
          P := P - 1;
 
          --  Mantissa.
-         loop
+         for I in 1 .. Ndigits loop
             Str (P) := Xdigit (Natural (Man and 15));
             P := P - 1;
             Man := Man / 16;
-            exit when Man = 0;
          end loop;
 
          P := P - 4;
