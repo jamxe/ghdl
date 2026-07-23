@@ -168,7 +168,7 @@ Analyze and elaborate [``-c``]
 .. HINT::
   With GCC/LLVM, :option:`-e` should be used, and :option:`-r` with mcode.
 
-The files are first parsed, and then a elaboration is performed, which drives an analysis.
+The files are first parsed, and then an elaboration is performed, which drives an analysis.
 Effectively, analysis and elaboration are combined, but there is no explicit call to :option:`-a`.
 With GCC/LLVM, code is generated during the elaboration.
 With mcode, the simulation is launched after the elaboration.
@@ -471,7 +471,7 @@ Options
   According to the VHDL standards before 2002, the only characters allowed in a source file (and that includes the
   comments) are the graphical characters of the ISO 8859-1 character set.
   This is incompatible with comments using UTF-8 or some other encoding.
-  This option lift this restriction.
+  This option lifts this restriction.
 
 .. option:: --syn-binding
 
@@ -562,9 +562,9 @@ Some warnings are reported only during analysis, others during elaboration.
 .. option:: --warn-default-binding
 .. option:: -Wdefault-binding
 
-  During analyze, warns if a component instantiation has neither
+  During analysis, warns if a component instantiation has neither
   configuration specification nor default binding.  This may be useful
-  if you want to detect during analyze possibly unbound components if
+  if you want to detect during analysis possibly unbound components if
   you don't use configuration.  See section :ref:`VHDL_standards` for
   more details about default binding rules.
 
@@ -637,7 +637,7 @@ Some warnings are reported only during analysis, others during elaboration.
     - Over-specified sensitivity lists (Redundant signals)
 
   .. ATTENTION::
-    Sensitity lists with indexed, selected or sliced names might generate
+    Sensitivity lists with indexed, selected or sliced names might generate
     incorrect warnings.
 
 .. option:: --warn-body
@@ -671,7 +671,7 @@ Some warnings are reported only during analysis, others during elaboration.
 .. option:: --warn-delta-cycle
 .. option:: -Wdelta-cycle
 
-  Emit a warning if a signal assignemnt creates a delta cycle in a
+  Emit a warning if a signal assignment creates a delta cycle in a
   postponed process.
 
 .. option:: --warn-missing-wait
@@ -683,7 +683,7 @@ Some warnings are reported only during analysis, others during elaboration.
 .. option:: --warn-shared
 .. option:: -Wshared
 
-  Emit a warning when a shared variable is declared and its type it
+  Emit a warning when a shared variable is declared and its type is
   not a protected type.
 
 .. option:: --warn-hide
@@ -704,12 +704,12 @@ Some warnings are reported only during analysis, others during elaboration.
 .. option:: --warn-others
 .. option:: -Wothers
 
-  Emit a warning is an `others` choice is not required because all the choices have been explicitly covered.
+  Emit a warning if an `others` choice is not required because all the choices have been explicitly covered.
 
 .. option:: --warn-pure
 .. option:: -Wpure
 
-  Emit a warning when a pure rules is violated (like declaring a pure function with access parameters).
+  Emit a warning when a pure rule is violated (like declaring a pure function with access parameters).
 
 .. option:: --warn-analyze-assert
 .. option:: -Wanalyze-assert
@@ -775,7 +775,7 @@ Diagnostics Control
 .. option:: --notes
 .. option:: --no-notes
 
-  Control whether note diagnositcs are displayed.  They are displayed by default.
+  Control whether note diagnostics are displayed.  They are displayed by default.
 
 Library commands
 ================

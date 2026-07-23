@@ -37,7 +37,7 @@ Unfortunately, there are many versions of the VHDL
 language, and they aren't backward compatible.
 
 The VHDL language was first standardized in 1987 by IEEE as IEEE 1076-1987, and
-is commonly referred as VHDL-87. This is certainly the most important version,
+is commonly referred to as VHDL-87. This is certainly the most important version,
 since most of the VHDL tools are still based on this standard.
 
 Various problems of this first standard have been analyzed by experts groups
@@ -130,7 +130,7 @@ A PSL statement is considered as a process, so it's not allowed within
 a process.
 
 All PSL directives (`assert`, `assume`, `restrict`, `cover`) must be clocked (GHDL doesn't support unclocked directives).
-Furthermore only one clock per directive is allowed.
+Furthermore, only one clock per directive is allowed.
 
 You can either use a default clock like this:
 
@@ -149,7 +149,7 @@ or use a clocked expression (note the use of parentheses):
 
 Of course only the simple subset of PSL is allowed.
 
-Currently the built-in functions are not implemented, see :ghdlsharp:`662`.
+Currently, the built-in functions are not implemented, see :ghdlsharp:`662`.
 PSL functions `prev()`, `stable()`, `rose()`, `fell()`, `onehot()` and `onehot0()` are supported with GHDL synthesis.
 
 PSL usage
@@ -301,7 +301,7 @@ hierarchy:
 Using vendor libraries
 ======================
 
-Many vendors libraries have been analyzed with `GHDL`. There are usually no problems. Be sure to use the
+Many vendor libraries have been analyzed with `GHDL`. There are usually no problems. Be sure to use the
 :option:`--work` option. However, some problems have been encountered. `GHDL` follows the `VHDL` LRM (the manual which
 defines `VHDL`) more strictly than other `VHDL` tools. You could try to relax the restrictions by using the
 :option:`--std=93c <--std>`, :option:`-fexplicit`, :option:`-frelaxed-rules` and

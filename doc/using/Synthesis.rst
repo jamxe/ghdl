@@ -73,9 +73,9 @@ Hence, available options for synthesis are the same as for analysis and/or simul
 In addition to those options, there are some synthesis specific options.
 
 .. TIP::
-  Furthermore there are lot of debug options available.
-  Beware: these debug options should only used for debugging purposes as they aren't guaranteed to be stable during
-  development of GHDL's synthesis feature.
+  Furthermore, there are a lot of debug options available.
+  Beware: these debug options should only be used for debugging purposes,
+  as they aren't guaranteed to be stable during development of GHDL's synthesis feature.
   You can find them in the file :ghdlsrc:`ghdlsynth.adb <ghdldrv/ghdlsynth.adb>` in the procedure ``Decode_Option()``.
 
 .. option:: -gNAME=VALUE
@@ -110,9 +110,9 @@ In addition to those options, there are some synthesis specific options.
   The difference between ``vhdl`` and ``vhdl-ieee`` (resp. ``raw-vhdl`` and
   ``raw-vhdl-ieee``) is for shift operators.  In the ``-ieee`` options, they
   are implemented using the shift operators provided by the ``ieee`` packages,
-  which are recognized by other synthesizer, while in the non ``-ieee``
-  options, they are implemented by provided function which do not fail in case
-  of invalid value, so that simulation do not fail early on invalid values.
+  which are recognized by other synthesizers, while in the non ``-ieee``
+  options, they are implemented by provided functions which do not fail in case
+  of invalid value, so that simulation does not fail early on invalid values.
 
 .. option:: -o=FILENAME
 

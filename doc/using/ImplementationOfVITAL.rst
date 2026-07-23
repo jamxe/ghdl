@@ -49,7 +49,7 @@ Currently, only VITAL level 0 checks are implemented. VITAL level 1 models
 can be analyzed, but GHDL doesn't check they comply with the VITAL standard.
 
 Moreover, GHDL doesn't check (yet) that timing generics are not read inside
-a VITAL level 0 model prior the VITAL annotation.
+a VITAL level 0 model prior to the VITAL annotation.
 
 The analysis of a non-conformant VITAL model fails. You can disable the
 checks of VITAL restrictions with the *--no-vital-checks*. Even when
@@ -66,8 +66,8 @@ Backannotation
 information provided by an external files.
 
 The external files must be SDF (Standard Delay Format) files. GHDL
-supports a tiny subset of SDF version 2.1. Other version numbers can be
-used, provided no features added by later versions are used.
+supports a tiny subset of SDF version 2.1. Other version numbers are
+supported, provided no features added by later versions are used.
 
 Hierarchical instance names are not supported. However you can use a list of
 instances. If there is no instance, the top entity will be annotated and
