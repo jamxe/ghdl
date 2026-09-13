@@ -334,13 +334,13 @@ package Netlists is
 
    --  Input
    function Get_Input_Parent (I : Input) return Instance;
-   function Get_Port_Idx (I : Input) return Port_Idx;
+   function Get_Input_Idx (I : Input) return Port_Idx;
    function Get_Driver (I : Input) return Net;
    function Get_Next_Sink (I : Input) return Input;
 
    --  Net (Output)
    function Get_Net_Parent (O : Net) return Instance;
-   function Get_Port_Idx (O : Net) return Port_Idx;
+   function Get_Output_Idx (O : Net) return Port_Idx;
    function Get_First_Sink (O : Net) return Input;
    function Get_Width (N : Net) return Width;
 

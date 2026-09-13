@@ -901,7 +901,7 @@ package body Netlists.Inference is
 
                if Get_Id (Inst) >= Id_User_None then
                   Name := Get_Output_Desc (Get_Module (Inst),
-                                           Get_Port_Idx (Inp)).Name;
+                                           Get_Input_Idx (Inp)).Name;
                   exit;
                end if;
                Inp := Get_Next_Sink (Inp);

@@ -23,7 +23,7 @@ namespace GhdlSynth {
   };
 
   //  Use struct wrappers for type safety.
-  //  Convention: W for wrapped, D for direct, B for boolean.
+  //  Convention: W for wrapped, D for direct, B for boolean, V for void
 #define GHDLSYNTH_ADA_PREFIX(N) netlists__##N
 #define GHDLSYNTH_ADA_WRAPPER_WW(NAME, RESTYPE, ARGTYPE) \
   extern "C" unsigned int GHDLSYNTH_ADA_PREFIX(NAME) (unsigned int); \
@@ -131,6 +131,7 @@ namespace GhdlSynth {
 
   struct Net { unsigned int id; };
   GHDLSYNTH_ADA_WRAPPER_DW(get_width, Width, Net);
+  GHDLSYNTH_ADA_WRAPPER_DW(get_output_idx, Port_Idx, Net);
 
   struct Instance { unsigned int id; };
   inline bool is_valid(Instance inst) { return inst.id != 0; }
@@ -153,6 +154,7 @@ namespace GhdlSynth {
   GHDLSYNTH_ADA_WRAPPER_WWD(get_output, Net, Instance, Port_Idx);
   GHDLSYNTH_ADA_WRAPPER_WW(get_driver, Net, Input);
   GHDLSYNTH_ADA_WRAPPER_WW(get_input_parent, Instance, Input);
+  GHDLSYNTH_ADA_WRAPPER_DW(get_input_idx, Port_Idx, Input);
 
   GHDLSYNTH_ADA_WRAPPER_WW(get_first_sink, Input, Net);
   GHDLSYNTH_ADA_WRAPPER_WW(get_next_sink, Input, Input);

@@ -164,7 +164,7 @@ package body Netlists.Disp_Common is
 
       declare
          Inst : constant Instance := Get_Net_Parent (N);
-         Idx : constant Port_Idx := Get_Port_Idx (N);
+         Idx : constant Port_Idx := Get_Output_Idx (N);
          M : Module;
          Id : Module_Id;
          Inst_Name : Sname;

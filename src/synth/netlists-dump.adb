@@ -82,7 +82,7 @@ package body Netlists.Dump is
    procedure Dump_Input_Name (I : Input; With_Id : Boolean := False)
    is
       Inst : constant Instance := Get_Input_Parent (I);
-      Idx : constant Port_Idx := Get_Port_Idx (I);
+      Idx : constant Port_Idx := Get_Input_Idx (I);
       M : constant Module := Get_Module (Inst);
    begin
       Dump_Name (Get_Instance_Name (Inst));
@@ -106,7 +106,7 @@ package body Netlists.Dump is
    procedure Dump_Net_Name (N : Net; With_Id : Boolean := False)
    is
       Inst : constant Instance := Get_Net_Parent (N);
-      Idx : constant Port_Idx := Get_Port_Idx (N);
+      Idx : constant Port_Idx := Get_Output_Idx (N);
    begin
       Dump_Name (Get_Instance_Name (Inst));
       Wr ('.');
@@ -434,7 +434,7 @@ package body Netlists.Dump is
       else
          declare
             Inst : constant Instance := Get_Net_Parent (N);
-            Idx : constant Port_Idx := Get_Port_Idx (N);
+            Idx : constant Port_Idx := Get_Output_Idx (N);
          begin
             if Is_Self_Instance (Inst) then
                Dump_Name (Get_Input_Desc (Get_Module (Inst), Idx).Name);
@@ -767,7 +767,7 @@ package body Netlists.Dump is
          if Self /= No_Instance then
             for I of Inputs (Self) loop
                Wr_Indent (Indent + 1);
-               Dump_Name (Get_Output_Desc (M, Get_Port_Idx (I)).Name);
+               Dump_Name (Get_Output_Desc (M, Get_Input_Idx (I)).Name);
                Wr (" := ");
                Drv := Get_Driver (I);
                if False then

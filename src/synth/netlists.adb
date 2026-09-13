@@ -887,13 +887,13 @@ package body Netlists is
       return Nets_Table.Table (O).Parent;
    end Get_Net_Parent;
 
-   function Get_Port_Idx (O : Net) return Port_Idx
+   function Get_Output_Idx (O : Net) return Port_Idx
    is
       pragma Assert (Is_Valid (O));
       Parent : constant Instance := Get_Net_Parent (O);
    begin
       return Port_Idx (O - Instances_Table.Table (Parent).First_Output);
-   end Get_Port_Idx;
+   end Get_Output_Idx;
 
    function Get_First_Sink (O : Net) return Input is
    begin
@@ -932,13 +932,13 @@ package body Netlists is
       return Inputs_Table.Table (I).Parent;
    end Get_Input_Parent;
 
-   function Get_Port_Idx (I : Input) return Port_Idx
+   function Get_Input_Idx (I : Input) return Port_Idx
    is
       pragma Assert (Is_Valid (I));
       Parent : constant Instance := Get_Input_Parent (I);
    begin
       return Port_Idx (I - Instances_Table.Table (Parent).First_Input);
-   end Get_Port_Idx;
+   end Get_Input_Idx;
 
    function Get_Driver (I : Input) return Net is
    begin

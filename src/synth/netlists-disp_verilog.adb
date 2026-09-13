@@ -349,7 +349,7 @@ package body Netlists.Disp_Verilog is
                      declare
                         I_Inst : constant Instance := Get_Input_Parent (I);
                         I_M : constant Module := Get_Module (I_Inst);
-                        I_Idx : constant Port_Idx := Get_Port_Idx (I);
+                        I_Idx : constant Port_Idx := Get_Input_Idx (I);
                      begin
                         Put_Name (Get_Output_Desc (I_M, I_Idx).Name);
                      end;
@@ -798,7 +798,7 @@ package body Netlists.Disp_Verilog is
                Iinst : constant Instance := Get_Input_Parent (Inp);
             begin
                Put_Name (Get_Output_Name (Get_Module (Iinst),
-                                          Get_Port_Idx (Inp)));
+                                          Get_Input_Idx (Inp)));
             end;
             Wr ("; // (inout - read)" & NL);
          when Id_Signal =>

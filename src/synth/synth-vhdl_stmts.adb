@@ -5185,7 +5185,7 @@ package body Synth.Vhdl_Stmts is
             Inst := Get_Net_Parent (N);
             if Is_Self_Instance (Inst) then
                --  This is really a port
-               Port := Get_Port_Idx (N);
+               Port := Get_Output_Idx (N);
                M := Get_Module (Inst);
                Set_Input_Port_Attribute (M, Port, Id, Ptype, Pv);
             else
@@ -5207,7 +5207,7 @@ package body Synth.Vhdl_Stmts is
                end loop;
                Inst := Get_Input_Parent (Inp);
                pragma Assert (Is_Self_Instance (Inst));
-               Port := Get_Port_Idx (Inp);
+               Port := Get_Input_Idx (Inp);
                M := Get_Module (Inst);
                Set_Output_Port_Attribute (M, Port, Id, Ptype, Pv);
             else
