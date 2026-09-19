@@ -950,17 +950,14 @@ package body Netlists.Disp_Vhdl is
          when Id_Inout
             | Id_Iinout =>
             --  Gates inout are special: output 1 must be connected to an
-            --  output (with the is_inout flag set) of the module.
-            Disp_Template ("  \o1 <= \i0; -- (inout - port)" & NL, Inst);
-            Disp_Template ("  \o0 <= ", Inst);
-            declare
-               Inp : constant Input := Get_First_Sink (Get_Output (Inst, 1));
-               Iinst : constant Instance := Get_Input_Parent (Inp);
-            begin
-               Put_Name (Get_Output_Name (Get_Module (Iinst),
-                                          Get_Input_Idx (Inp)));
-            end;
-            Wr ("; -- (inout - read)" & NL);
+            --  input (with the is_inout flag set) of the module.
+            if Get_Input_Net (Inst, 0) /= No_Net then
+               Disp_Template ("  \i1 <= \i0; -- (inout - port)" & NL, Inst);
+            end if;
+            if Is_Connected (Get_Output (Inst, 0)) then
+               --  Disconnected by cleanup.
+               Disp_Template ("  \o0 <= \i1; -- (inout - output)" & NL, Inst);
+            end if;
          when Id_Signal =>
             Disp_Template ("  \o0 <= \i0; -- (signal)" & NL, Inst);
          when Id_Isignal =>

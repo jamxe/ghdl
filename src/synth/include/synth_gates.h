@@ -64,6 +64,7 @@ enum Module_Id {
    Id_Iinout  = 58,
    Id_Enable  = 59,
    Id_Nop = 60,
+   Id_Ioport = 61,
    Id_Dff   = 64,
    Id_Adff  = 65,
    Id_Idff  = 66,

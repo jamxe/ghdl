@@ -63,12 +63,14 @@ package body Netlists.Cleanup is
       use Netlists.Gates;
       Inst : Instance;
       Next_Inst : Instance;
+      Mid : Module_Id;
    begin
       Inst := Get_First_Instance (M);
       while Inst /= No_Instance loop
          Next_Inst := Get_Next_Instance (Inst);
 
-         case Get_Id (Inst) is
+         Mid := Get_Id (Inst);
+         case Mid is
             when Id_Output
                | Id_Ioutput
                | Id_Port
@@ -80,21 +82,55 @@ package body Netlists.Cleanup is
                end if;
             when Id_Inout
               | Id_Iinout =>
-               if Get_First_Sink (Get_Output (Inst, 0)) = No_Input then
-                  --  Direct value not connected.
-                  --  This means the inout port is only used as an output,
-                  --  so the intermediate inout gate can be removed.
-                  declare
-                     Oport : constant Net := Get_Output (Inst, 1);
-                     Mod_Port : constant Input := Get_First_Sink (Oport);
-                     Iport : constant Input := Get_Input (Inst, 0);
-                     Iport_Net : constant Net := Get_Driver (Iport);
-                  begin
-                     Disconnect (Mod_Port);
-                     Disconnect (Iport);
-                     Connect (Mod_Port, Iport_Net);
-                  end;
+               if Mid = Id_Iinout then
+                  --  Remove default value (not used).
+                  --  The gate could be replaced with an Inout gate.
+                  Disconnect (Get_Input (Inst, 2));
                end if;
+
+               declare
+                  Inp : constant Input := Get_Input (Inst, 1);
+                  P : constant Net := Get_Driver (Inp);
+                  Out0 : constant Net := Get_Output (Inst, 0);
+               begin
+                  --  Redirect all the readers of the output of that inout
+                  --  gate to the port.  This is important so that the inout
+                  --  port of sub-instances are directly connected to the
+                  --  inout port rather than going through this inout gate.
+                  --  This allows a correct vhdl output (as it is difficult
+                  --  to express a bidirectional assignment).
+                  if Get_Input_Net (Inst, 0) = No_Net then
+                     --  If there is no input, also remove the gate.
+                     Disconnect (Inp);
+                     Redirect_Inputs (Out0, P);
+                     Remove_Instance (Inst);
+                  else
+                     Redirect_Inputs (Out0, P);
+                  end if;
+               end;
+            when Id_Ioport =>
+               declare
+                  N : Net;
+                  Inp : Input;
+               begin
+                  --  Input 0 'i' is redirected to output 1 'oport'.
+                  N := Disconnect_And_Get (Inst, 0);
+                  if N /= No_Net then
+                     Redirect_Inputs (Get_Output (Inst, 1), N);
+                  end if;
+
+                  --  Input 1 'iport' is redirected to output 0 'o'.
+                  N := Disconnect_And_Get (Inst, 1);
+                  Redirect_Inputs (Get_Output (Inst, 0), N);
+
+                  --  Remove 'init' connection.
+                  Inp := Get_Input (Inst, 2);
+                  if Get_Driver (Inp) /= No_Net then
+                     Disconnect (Inp);
+                  end if;
+
+                  Remove_Instance (Inst);
+               end;
             when others =>
                null;
          end case;
@@ -194,6 +230,14 @@ package body Netlists.Cleanup is
                | Id_Cover
                | Id_Assert_Cover =>
                Insert_Mark_And_Sweep (Inspect, Inst);
+            when Id_Inout
+              | Id_Iinout =>
+               --  Input 0 is for local assignment.
+               --  As the output is not connected, keep the gate if input 0
+               --  is.
+               if Get_Input (Inst, 0) /= No_Input then
+                  Insert_Mark_And_Sweep (Inspect, Inst);
+               end if;
             when Id_User_None
                | Id_User_Parameters =>
                --  Always keep user modules.

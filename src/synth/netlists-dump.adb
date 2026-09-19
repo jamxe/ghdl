@@ -301,9 +301,9 @@ package body Netlists.Dump is
       end if;
    end Disp_Width;
 
-   procedure Dump_Module_Port (Desc : Port_Desc; Dir : Port_Kind) is
+   procedure Dump_Module_Port (Desc : Port_Desc) is
    begin
-      case Dir is
+      case Desc.Dir is
          when Port_In =>
             Wr ("input");
          when Port_Out =>
@@ -367,7 +367,7 @@ package body Netlists.Dump is
             Desc : constant Port_Desc := Get_Input_Desc (M, I - 1);
          begin
             Wr_Indent (Indent + 1);
-            Dump_Module_Port (Desc, Port_In);
+            Dump_Module_Port (Desc);
             Dump_Port_Attributes
               (Desc, Get_Input_Port_First_Attribute (M, I - 1), Indent + 1);
          end;
@@ -377,7 +377,7 @@ package body Netlists.Dump is
             Desc : constant Port_Desc := Get_Output_Desc (M, I - 1);
          begin
             Wr_Indent (Indent + 1);
-            Dump_Module_Port (Desc, Desc.Dir);
+            Dump_Module_Port (Desc);
             Dump_Port_Attributes
               (Desc, Get_Output_Port_First_Attribute (M, I - 1), Indent + 1);
          end;

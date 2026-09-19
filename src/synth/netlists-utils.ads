@@ -48,7 +48,7 @@ package Netlists.Utils is
    function Get_Input_Width (M : Module; I : Port_Idx) return Width;
    function Get_Output_Width (M : Module; I : Port_Idx) return Width;
 
-   --  For the yosys plugin: true if an output is also an input.
+   --  For the yosys plugin: true if an input is inout.
    function Get_Inout_Flag (M : Module; I : Port_Idx) return Boolean;
 
    --  Return the net (driver) connected to input IDX of INSTANCE.

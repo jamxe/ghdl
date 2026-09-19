@@ -100,7 +100,7 @@ package body Netlists.Utils is
 
    function Get_Inout_Flag (M : Module; I : Port_Idx) return Boolean is
    begin
-      return Get_Output_Desc (M, I).Dir = Port_Inout;
+      return Get_Input_Desc (M, I).Dir = Port_Inout;
    end Get_Inout_Flag;
 
    function Get_Param_Name (M : Module; I : Param_Idx) return Sname is

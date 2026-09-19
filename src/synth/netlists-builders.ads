@@ -180,6 +180,7 @@ package Netlists.Builders is
                           return Net;
    function Build_Port (Ctxt : Context_Acc; N : Net) return Net;
    function Build_Enable (Ctxt : Context_Acc) return Net;
+   function Build_Ioport (Ctxt : Context_Acc; W : Width) return Instance;
 
    function Build_Assert (Ctxt : Context_Acc; Name : Sname; Cond : Net)
                          return Instance;
@@ -268,6 +269,7 @@ private
       M_Inout : Module;
       M_Iinout : Module;
       M_Enable : Module;
+      M_Ioport : Module;
       M_Dff : Module;
       M_Idff : Module;
       M_Adff : Module;

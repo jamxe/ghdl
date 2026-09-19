@@ -77,7 +77,10 @@ package body Synth.Disp_Vhdl is
       Desc : Port_Desc;
    begin
       for I in 1 .. Get_Nbr_Inputs (M) loop
-         Disp_Signal (Get_Input_Desc (M, I - 1));
+         Desc := Get_Input_Desc (M, I - 1);
+         if Desc.Dir /= Port_Inout then
+            Disp_Signal (Desc);
+         end if;
       end loop;
       for I in 1 .. Get_Nbr_Outputs (M) loop
          Desc := Get_Output_Desc (M, I - 1);

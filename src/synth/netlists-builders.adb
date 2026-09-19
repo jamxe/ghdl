@@ -448,8 +448,9 @@ package body Netlists.Builders is
    procedure Create_Objects_Module (Ctxt : Context_Acc)
    is
       Outputs : Port_Desc_Array (0 .. 0);
-      Inputs2 : Port_Desc_Array (0 .. 1);
       Outputs2 : Port_Desc_Array (0 .. 1);
+      Inputs2 : Port_Desc_Array (0 .. 1);
+      Inputs3 : Port_Desc_Array (0 .. 2);
    begin
       Inputs2 := (0 => Create_Input ("i"),
                   1 => Create_Input ("init"));
@@ -493,18 +494,28 @@ package body Netlists.Builders is
          Id_Enable, 1, 1, 0);
       Set_Ports_Desc (Ctxt.M_Enable, Inputs2 (0 .. 0), Outputs);
 
+      --  For inout and iinout
+      Inputs3 := (0 => Inputs2 (0),
+                  1 => Create_Input ("iport"),
+                  2 => Inputs2 (1));
       Ctxt.M_Inout := New_User_Module
         (Ctxt.Design, New_Sname_System (Name_Inout),
-         Id_Inout, 1, 2, 0);
-      Outputs2 := (0 => Outputs (0),
-                   1 => Create_Output ("oport"));
-      Set_Ports_Desc (Ctxt.M_Inout, Inputs2 (0 .. 0), Outputs2);
+         Id_Inout, 2, 1, 0);
+      Set_Ports_Desc (Ctxt.M_Inout, Inputs3 (0 .. 1), Outputs);
 
       Ctxt.M_Iinout := New_User_Module
         (Ctxt.Design,
          New_Sname_System (Get_Identifier("iinout")),
-         Id_Iinout, 2, 2, 0);
-      Set_Ports_Desc (Ctxt.M_Iinout, Inputs2 (0 .. 1), Outputs2);
+         Id_Iinout, 3, 1, 0);
+      Set_Ports_Desc (Ctxt.M_Iinout, Inputs3, Outputs);
+
+      Outputs2 := (0 => Outputs (0),
+                   1 => Create_Output ("oport"));
+      Ctxt.M_Ioport := New_User_Module
+        (Ctxt.Design,
+         New_Sname_System (Get_Identifier("ioport")),
+         Id_Ioport, 3, 2, 0);
+      Set_Ports_Desc (Ctxt.M_Ioport, Inputs3, Outputs2);
    end Create_Objects_Module;
 
    procedure Create_Dff_Modules (Ctxt : Context_Acc)
@@ -1418,8 +1429,6 @@ package body Netlists.Builders is
       Inst := New_Internal_Instance (Ctxt, M);
       O := Get_Output (Inst, 0);
       Set_Width (O, W);
-      O := Get_Output (Inst, 1);
-      Set_Width (O, W);
       return Inst;
    end Build_Inout_Object;
 
@@ -1432,6 +1441,17 @@ package body Netlists.Builders is
    begin
       return Build_Inout_Object (Ctxt, Ctxt.M_Iinout, W);
    end Build_Iinout;
+
+   function Build_Ioport (Ctxt : Context_Acc; W : Width) return Instance
+   is
+      Inst : Instance;
+      O : Net;
+   begin
+      Inst := Build_Inout_Object (Ctxt, Ctxt.M_Ioport, W);
+      O := Get_Output (Inst, 1);
+      Set_Width (O, W);
+      return Inst;
+   end Build_Ioport;
 
    function Build_Ioutput (Ctxt : Context_Acc; Init : Net) return Net
    is

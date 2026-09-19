@@ -893,6 +893,7 @@ package body Synth.Vhdl_Decls is
       Drv : Net;
       Def_Val : Net;
       W : Wire_Id;
+      Mid : Module_Id;
    begin
       if Vt = No_Valtyp then
          pragma Assert (Is_Error (Syn_Inst));
@@ -916,22 +917,48 @@ package body Synth.Vhdl_Decls is
       Vt := (Vt.Typ, Create_Value_Net (Gate_Net, Process_Pool'Access));
 
       Gate := Get_Net_Parent (Gate_Net);
-      case Get_Id (Gate) is
+      Mid := Get_Id (Gate);
+      Drv := Get_Input_Net (Gate, 0);
+      case Mid is
          when Id_Signal
             | Id_Output
             | Id_Inout =>
-            Drv := Get_Input_Net (Gate, 0);
             Def_Val := No_Net;
          when Id_Isignal
-            | Id_Ioutput
-            | Id_Iinout =>
-            Drv := Get_Input_Net (Gate, 0);
+            | Id_Ioutput =>
             Def_Val := Get_Input_Net (Gate, 1);
+         when Id_Iinout
+           | Id_Ioport =>
+            Def_Val := Get_Input_Net (Gate, 2);
          when others => raise Internal_Error; --  Todo: output ?
       end case;
+
       if Drv = No_Net then
+         case Mid is
+            when Id_Inout
+              | Id_Iinout =>
+               --  For inout ports, consider them as driven if it is connected
+               --  to an inout port of a sub-instance.
+               declare
+                  Snk : Input;
+                  Smod : Module;
+               begin
+                  Snk := Get_First_Sink (Gate_Net);
+                  while Snk /= No_Input loop
+                     Smod := Get_Module (Get_Input_Parent (Snk));
+                     if Get_Inout_Flag (Smod, Get_Input_Idx (Snk)) then
+                        --  The net is connected to an inout port.
+                        return;
+                     end if;
+                     Snk := Get_Next_Sink (Snk);
+                  end loop;
+               end;
+            when others =>
+               null;
+         end case;
+
          --  Undriven signals.
-         if Is_Connected (Get_Output (Gate, 0)) then
+         if Is_Connected (Gate_Net) then
             --  No warning if the signal is not used.
             --  TODO: maybe simply remove it.
             if Def_Val = No_Net then

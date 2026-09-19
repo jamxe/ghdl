@@ -149,8 +149,9 @@ package Netlists.Gates is
    --  The current value of the inout port can be read from output 0.
    --
    --  Inputs:  0: value to be assigned to the port
-   --  Outputs: 0: value of the port
-   --           1: direct and only connection to the port
+   --           1: value from the port
+   --           2: initial value (for iinout)
+   --  Outputs: the value (replaced by input 1 during cleanup)
    Id_Inout   : constant Module_Id := 57;
 
    --  Like Id_Inout but with an initial value.
@@ -161,6 +162,14 @@ package Netlists.Gates is
 
    --  Temporary gate, O = I
    Id_Nop : constant Module_Id := 60;
+
+   --  Virtual gate for flat instantiation.
+   --  Inputs:  0: value from assignment
+   --           1: connection from parent (effective value)
+   --           2: initial value (if any)
+   --  Outputs: 0: value read
+   --           1: connection to parent (driving value)
+   Id_Ioport : constant Module_Id := 61;
 
    --  Note: initial values must be constant nets.
    --
