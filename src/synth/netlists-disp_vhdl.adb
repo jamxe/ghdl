@@ -360,11 +360,15 @@ package body Netlists.Disp_Vhdl is
                Wr (" => ");
             end if;
             Drv := Get_Driver (I);
-            Drv_Inst := Get_Net_Parent (Drv);
-            if Get_Id (Drv_Inst) in Constant_Module_Id then
-               Disp_Constant_Inline (Drv_Inst);
+            if Drv = No_Net then
+               Wr ("open");
             else
-               Disp_Net_Name (Drv);
+               Drv_Inst := Get_Net_Parent (Drv);
+               if Get_Id (Drv_Inst) in Constant_Module_Id then
+                  Disp_Constant_Inline (Drv_Inst);
+               else
+                  Disp_Net_Name (Drv);
+               end if;
             end if;
          end loop;
          --  Outputs
